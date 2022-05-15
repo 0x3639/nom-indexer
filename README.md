@@ -18,8 +18,7 @@ Make a copy of the example.config.yaml file and name the copy "config.yaml". Set
 
 ## Running the indexer
 ```
-cd bin
-dart run main
+dart run bin/main
 ```
 
 Initially it will take some time for the indexer to index the network up to the current height.
