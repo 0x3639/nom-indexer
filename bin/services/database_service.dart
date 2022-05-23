@@ -13,6 +13,7 @@ class Table {
   static String get sentinels => 'Sentinels';
   static String get tokens => 'Tokens';
   static String get projects => 'Projects';
+  static String get projectPhases => 'ProjectPhases';
   static String get votes => 'Votes';
 }
 
@@ -41,7 +42,7 @@ class DatabaseService {
 
   final String _tokenColumns =
       'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT';
-      
+
   final String _accountBlockColumns =
       '''hash TEXT PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, blockType SMALLINT,
       height BIGINT, address TEXT, toAddress TEXT, amount BIGINT, tokenStandard TEXT, data TEXT, method TEXT, input JSONB,
@@ -51,8 +52,7 @@ class DatabaseService {
       '''ownerAddress TEXT PRIMARY KEY, producerAddress TEXT, withdrawAddress TEXT, name TEXT, rank INT,
       giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
       revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
-      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL,
-      totalVotes INT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL''';
+      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL''';
 
   final String _sentinelColumns =
       '''owner TEXT PRIMARY KEY, registrationTimestamp BIGINT, isRevocable BOOL, revokeCooldown TEXT, active BOOL''';
@@ -61,8 +61,12 @@ class DatabaseService {
       '''id TEXT PRIMARY KEY, votingId TEXT, owner TEXT, name TEXT, description TEXT, url TEXT, znnFundsNeeded BIGINT, qsrFundsNeeded BIGINT,
       creationTimestamp BIGINT, lastUpdateTimestamp BIGINT, status SMALLINT, yesVotes SMALLINT DEFAULT 0 NOT NULL, noVotes SMALLINT DEFAULT 0 NOT NULL, totalVotes SMALLINT DEFAULT 0 NOT NULL''';
 
+  final String _projectPhaseColumns =
+      '''id TEXT PRIMARY KEY, projectId TEXT, votingId TEXT, name TEXT, description TEXT, url TEXT, znnFundsNeeded BIGINT, qsrFundsNeeded BIGINT,
+      creationTimestamp BIGINT, acceptedTimestamp BIGINT, status SMALLINT, yesVotes SMALLINT DEFAULT 0 NOT NULL, noVotes SMALLINT DEFAULT 0 NOT NULL, totalVotes SMALLINT DEFAULT 0 NOT NULL''';
+
   final String voteColumns =
-      '''id SERIAL PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, voterAddress TEXT, projectId TEXT, votingId TEXT, vote SMALLINT''';
+      '''id SERIAL PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, voterAddress TEXT, projectId TEXT, phaseId TEXT, votingId TEXT, vote SMALLINT''';
 
   initialize() async {
     _conn = await connect(_uri);
@@ -83,6 +87,8 @@ class DatabaseService {
           'CREATE TABLE IF NOT EXISTS ${Table.sentinels} ($_sentinelColumns)'),
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.projects} ($_projectColumns)'),
+      _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.projectPhases} ($_projectPhaseColumns)'),
       _conn.execute('CREATE TABLE IF NOT EXISTS ${Table.votes} ($voteColumns)')
     ]);
     print('Connected to database');
@@ -113,11 +119,27 @@ class DatabaseService {
     return r.isNotEmpty && r[0][0] != null ? r[0][0] : '';
   }
 
-  Future<bool> hasVoted(String voterAddress, String votingId) async {
+  Future<List<String>> getProjectAndPhaseIdFromVotingId(String votingId) async {
     final r = await _conn.query(
-        'SELECT vote FROM votes WHERE voterAddress = @voterAddress AND votingId = @votingId',
-        {'voterAddress': voterAddress, 'votingId': votingId}).toList();
-    return r.isNotEmpty && r[0][0] != null;
+        'SELECT projectId, id FROM projectPhases WHERE votingId = @votingId',
+        {'votingId': votingId}).toList();
+    return r.isNotEmpty ? [r[0][0], r[0][1]] : [];
+  }
+
+  Future<int> getVoteCountForProjects(
+      String voterAddress, List<String> ids) async {
+    final r = await _conn.query(
+        'SELECT DISTINCT projectId FROM votes where voterAddress = @voterAddress and projectId LIKE ANY (@ids)',
+        {'voterAddress': voterAddress, 'ids': ids}).toList();
+    return r.isNotEmpty ? r.length : 0;
+  }
+
+  Future<int> getVoteCountForPhases(
+      String voterAddress, List<String> ids) async {
+    final r = await _conn.query(
+        'SELECT DISTINCT phaseId FROM votes where voterAddress = @voterAddress and phaseId LIKE ANY (@ids)',
+        {'voterAddress': voterAddress, 'ids': ids}).toList();
+    return r.isNotEmpty ? r.length : 0;
   }
 
   insertMomentum(Momentum momentum) async {
@@ -260,8 +282,23 @@ class DatabaseService {
         ''', json);
   }
 
+  insertProjectPhase(Phase phase, String votingId) async {
+    final json = phase.toJson();
+    json['votingId'] = votingId;
+    json['yesVotes'] = phase.voteBreakdown.yes;
+    json['noVotes'] = phase.voteBreakdown.no;
+    json['totalVotes'] = phase.voteBreakdown.total;
+
+    await _conn.execute('''
+        INSERT INTO ${Table.projectPhases} VALUES (@id, @projectId, @votingId, @name,
+        @description, @url, @znnFundsNeeded, @qsrFundsNeeded, @creationTimestamp, @acceptedTimestamp, @status, @yesVotes, @noVotes, @totalVotes)
+        ON CONFLICT (id) DO UPDATE SET acceptedTimestamp = @acceptedTimestamp, status = @status, yesVotes = @yesVotes, noVotes = @noVotes,
+        totalVotes = @totalVotes
+        ''', json);
+  }
+
   insertVote(AccountBlock block, String voterAddress, String projectId,
-      String votingId, int vote) async {
+      String phaseId, String votingId, int vote) async {
     final json = {};
     json['momentumHash'] =
         block.confirmationDetail?.momentumHash.toString() ?? '';
@@ -270,19 +307,20 @@ class DatabaseService {
     json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? '';
     json['voterAddress'] = voterAddress;
     json['projectId'] = projectId;
+    json['phaseId'] = phaseId;
     json['votingId'] = votingId;
     json['vote'] = vote;
 
     await _conn.execute('''
-        INSERT INTO ${Table.votes} VALUES (DEFAULT, @momentumHash, @momentumTimestamp, @momentumHeight, @voterAddress, @projectId, @votingId, @vote)
+        INSERT INTO ${Table.votes} VALUES (DEFAULT, @momentumHash, @momentumTimestamp, @momentumHeight, @voterAddress, @projectId, @phaseId, @votingId, @vote)
         ''', json);
   }
 
-  updatePillarVotingActivity(String ownerAddress, int totalProjects) async {
+  updatePillarVotingActivity(String ownerAddress, double votingActivity) async {
     await _conn.execute('''
         UPDATE ${Table.pillars}
-        SET votingActivity = (totalVotes + 1)::decimal / @totalProjects, totalVotes = totalVotes + 1
+        SET votingActivity = @votingActivity
         WHERE ownerAddress = @ownerAddress
-        ''', {'totalProjects': totalProjects, 'ownerAddress': ownerAddress});
+        ''', {'votingActivity': votingActivity, 'ownerAddress': ownerAddress});
   }
 }

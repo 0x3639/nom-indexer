@@ -5,26 +5,35 @@ import 'config/config.dart';
 import 'services/database_service.dart';
 import 'indexer/nom_indexer.dart';
 
-
 Future<void> main(List<String> arguments) async {
   Config.load();
 
   await DatabaseService().initialize();
-  
+
   final node = Zenon();
   await node.wsClient.initialize(Config.nodeUrlWs);
 
   final indexer = NomIndexer(node);
   await indexer.sync();
+  await indexer.updatePillarVotingActivity();
 
-  _run(indexer);
+  _runIndexer(indexer);
+  _runCron(indexer);
 }
 
-_run(NomIndexer indexer) {
+_runIndexer(NomIndexer indexer) {
   // NOTE: Use polling for now until issues with the unreliable WS subscription are resolved.
   Timer.periodic(Duration(seconds: 10), (Timer t) async {
     t.cancel();
     await indexer.sync();
-    _run(indexer);
+    _runIndexer(indexer);
+  });
+}
+
+_runCron(NomIndexer indexer) {
+  Timer.periodic(Duration(minutes: 10), (Timer t) async {
+    t.cancel();
+    await indexer.updatePillarVotingActivity();
+    _runCron(indexer);
   });
 }

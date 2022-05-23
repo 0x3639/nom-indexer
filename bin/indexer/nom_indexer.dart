@@ -12,7 +12,7 @@ class TxData {
 
 class NomIndexer {
   late final Zenon _node;
-  
+
   late PillarInfoList _pillars;
   late SentinelInfoList _sentinels;
   late ProjectList _projects;
@@ -32,6 +32,44 @@ class NomIndexer {
   sync() async {
     await _updateData();
     await _syncHeight();
+  }
+
+  updatePillarVotingActivity() async {
+    final List<String> projectIds = [];
+    final List<String> phaseIds = [];
+
+    for (final project in _projects.list) {
+      if (project.status == AcceleratorProjectStatus.voting) {
+        projectIds.add(project.id.toString());
+      }
+      for (final phase in project.phases) {
+        if (phase.status == AcceleratorProjectStatus.voting) {
+          phaseIds.add(phase.id.toString());
+        }
+      }
+    }
+
+    await Future.forEach(_pillars.list, (PillarInfo pillar) async {
+      int votes = 0;
+
+      if (projectIds.isNotEmpty) {
+        votes += await DatabaseService().getVoteCountForProjects(
+            pillar.ownerAddress.toString(), projectIds);
+      }
+      if (phaseIds.isNotEmpty) {
+        votes += await DatabaseService()
+            .getVoteCountForPhases(pillar.ownerAddress.toString(), phaseIds);
+      }
+
+      final votableProposals = projectIds.length + phaseIds.length;
+      final double votingActivity =
+          votableProposals > 0 ? votes / votableProposals : 0;
+
+      await DatabaseService().updatePillarVotingActivity(
+          pillar.ownerAddress.toString(), votingActivity);
+
+      print(pillar.name + ' ' + votingActivity.toString());
+    });
   }
 
   _updateData() async {
@@ -161,8 +199,15 @@ class NomIndexer {
   _updateProjects() async {
     try {
       _projects = await _node.embedded.accelerator.getAll();
-      Future.forEach(_projects.list, (Project p) async {
-        await DatabaseService().insertProject(p, _getProjectVotingId(p.id));
+      Future.forEach(_projects.list, (Project project) async {
+        await DatabaseService()
+            .insertProject(project, _getVotingId(project.id));
+        if (project.phases.isNotEmpty) {
+          Future.forEach(project.phases, (Phase phase) async {
+            await DatabaseService()
+                .insertProjectPhase(phase, _getVotingId(phase.id));
+          });
+        }
       });
     } catch (e) {
       print(e.toString());
@@ -210,25 +255,25 @@ class NomIndexer {
   _indexEmbeddedAcceleratorContract(AccountBlock block, TxData data) async {
     if (data.method == 'VoteByName' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null) {
-        final projectId = await DatabaseService()
+        String projectId = await DatabaseService()
             .getProjectIdFromVotingId(data.inputs['id'] ?? '');
+        String phaseId = '';
+        if (projectId.isEmpty) {
+          List<String> ids = await DatabaseService()
+              .getProjectAndPhaseIdFromVotingId(data.inputs['id'] ?? '');
+          if (ids.length == 2) {
+            projectId = ids[0];
+            phaseId = ids[1];
+          }
+        }
 
         if (data.inputs.containsKey('name') &&
             data.inputs.containsKey('id') &&
             data.inputs.containsKey('vote')) {
           final voterAddress = _getPillarOwnerAddress(data.inputs['name']!);
 
-          if (projectId.isNotEmpty) {
-            final hasVoted = await DatabaseService()
-                .hasVoted(voterAddress, data.inputs['id']!);
-            if (!hasVoted) {
-              await DatabaseService()
-                  .updatePillarVotingActivity(voterAddress, _projects.count);
-            }
-          }
-
           await DatabaseService().insertVote(block, voterAddress, projectId,
-              data.inputs['id']!, int.parse(data.inputs['vote']!));
+              phaseId, data.inputs['id']!, int.parse(data.inputs['vote']!));
         }
       }
     }
@@ -282,10 +327,10 @@ class NomIndexer {
     return TxData();
   }
 
-  String _getProjectVotingId(Hash projectId) {
-    // TODO: Find a better way to map the project ID with the voting ID.
+  String _getVotingId(Hash projectOrPhaseId) {
+    // TODO: Find a better way to map the project or phase ID with the voting ID.
     List<int> encoded = Definitions.accelerator
-        .encodeFunction('VoteByName', [projectId.getBytes(), '', 0]);
+        .encodeFunction('VoteByName', [projectOrPhaseId.getBytes(), '', 0]);
     List decoded = Definitions.accelerator.decodeFunction(encoded);
     return decoded[0]?.toString() ?? '';
   }
