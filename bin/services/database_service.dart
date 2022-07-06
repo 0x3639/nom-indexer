@@ -52,7 +52,7 @@ class DatabaseService {
       '''ownerAddress TEXT PRIMARY KEY, producerAddress TEXT, withdrawAddress TEXT, name TEXT, rank INT,
       giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
       revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
-      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL''';
+      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, isRevoked BOOL DEFAULT false NOT NULL''';
 
   final String _sentinelColumns =
       '''owner TEXT PRIMARY KEY, registrationTimestamp BIGINT, isRevocable BOOL, revokeCooldown TEXT, active BOOL''';
@@ -256,6 +256,14 @@ class DatabaseService {
       'slotCostQsr': slotCostQsr,
       'ownerAddress': ownerAddress
     });
+  }
+
+  setPillarAsRevoked(String ownerAddress) async {
+    await _conn.execute('''
+        UPDATE ${Table.pillars}
+        SET isRevoked = @isRevoked
+        WHERE ownerAddress = @ownerAddress
+        ''', {'isRevoked': true, 'ownerAddress': ownerAddress});
   }
 
   insertSentinel(SentinelInfo sentinel) async {

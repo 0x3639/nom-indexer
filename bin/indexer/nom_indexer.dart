@@ -123,7 +123,7 @@ class NomIndexer {
       if (ai.balanceInfoList != null) {
         await Future.forEach(ai.balanceInfoList!,
             (BalanceInfoListItem bi) async {
-          if (bi.balance != null && bi.balance! > 0) {
+          if (bi.balance != null && bi.balance! >= 0) {
             await DatabaseService().insertBalance(ai.address, bi);
           }
         });
@@ -249,6 +249,9 @@ class NomIndexer {
           }
         }
       }
+    } else if (data.method == 'Revoke') {
+      await DatabaseService().setPillarAsRevoked(
+          _getPillarOwnerAddress(data.inputs['name'] ?? ''));
     }
   }
 
