@@ -221,6 +221,8 @@ class NomIndexer {
       await _indexEmbeddedPillarContract(block, data);
     } else if (contract == acceleratorAddress.toString()) {
       await _indexEmbeddedAcceleratorContract(block, data);
+    } else if (contract == plasmaAddress.toString()) {
+      await _indexEmbeddedPlasmaContract(block, data);
     }
   }
 
@@ -282,6 +284,39 @@ class NomIndexer {
     }
   }
 
+  _indexEmbeddedPlasmaContract(AccountBlock block, TxData data) async {
+    if (data.method == 'Fuse' && data.inputs.isNotEmpty) {
+      if (block.confirmationDetail != null &&
+          data.inputs.containsKey('address') &&
+          block.pairedAccountBlock != null) {
+        int pageIndex = 0;
+        int pageSize = 100;
+        while (true) {
+          final FusionEntryList entries = await _node.embedded.plasma
+              .getEntriesByAddress(block.pairedAccountBlock!.address,
+                  pageIndex: pageIndex, pageSize: pageSize);
+          await Future.forEach(entries.list, (FusionEntry? fusion) async {
+            if (data.inputs['address'] ==
+                (fusion?.beneficiary.toString() ?? '')) {
+              await DatabaseService().insertPlasmaFusion(
+                  block.pairedAccountBlock!,
+                  fusion!,
+                  _getFusionCancelId(fusion.id));
+            }
+          });
+          if (entries.list.length < pageSize) {
+            break;
+          }
+          pageIndex++;
+        }
+      }
+    } else if (data.method == 'CancelFuse' && data.inputs.isNotEmpty) {
+      if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
+        await DatabaseService().setPlasmaFusionInactive(data.inputs['id']!);
+      }
+    }
+  }
+
   TxData? _tryDecodeTxData(AccountBlock block) {
     if (block.data.isEmpty) return null;
 
@@ -335,6 +370,14 @@ class NomIndexer {
     List<int> encoded = Definitions.accelerator
         .encodeFunction('VoteByName', [projectOrPhaseId.getBytes(), '', 0]);
     List decoded = Definitions.accelerator.decodeFunction(encoded);
+    return decoded[0]?.toString() ?? '';
+  }
+
+  String _getFusionCancelId(Hash fusionId) {
+    // TODO: Find a better way to map the fusion ID with the canceling ID.
+    List<int> encoded =
+        Definitions.plasma.encodeFunction('CancelFuse', [fusionId.getBytes()]);
+    List decoded = Definitions.plasma.decodeFunction(encoded);
     return decoded[0]?.toString() ?? '';
   }
 

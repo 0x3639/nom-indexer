@@ -15,6 +15,7 @@ class Table {
   static String get projects => 'Projects';
   static String get projectPhases => 'ProjectPhases';
   static String get votes => 'Votes';
+  static String get fusions => 'Fusions';
 }
 
 class DatabaseService {
@@ -65,8 +66,11 @@ class DatabaseService {
       '''id TEXT PRIMARY KEY, projectId TEXT, votingId TEXT, name TEXT, description TEXT, url TEXT, znnFundsNeeded BIGINT, qsrFundsNeeded BIGINT,
       creationTimestamp BIGINT, acceptedTimestamp BIGINT, status SMALLINT, yesVotes SMALLINT DEFAULT 0 NOT NULL, noVotes SMALLINT DEFAULT 0 NOT NULL, totalVotes SMALLINT DEFAULT 0 NOT NULL''';
 
-  final String voteColumns =
+  final String _voteColumns =
       '''id SERIAL PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, voterAddress TEXT, projectId TEXT, phaseId TEXT, votingId TEXT, vote SMALLINT''';
+
+  final String _fusionColumns =
+      '''id TEXT PRIMARY KEY, address TEXT, beneficiary TEXT, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, qsrAmount BIGINT, expirationHeight BIGINT, isActive BOOL, cancelId TEXT''';
 
   initialize() async {
     _conn = await connect(_uri);
@@ -89,7 +93,10 @@ class DatabaseService {
           'CREATE TABLE IF NOT EXISTS ${Table.projects} ($_projectColumns)'),
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.projectPhases} ($_projectPhaseColumns)'),
-      _conn.execute('CREATE TABLE IF NOT EXISTS ${Table.votes} ($voteColumns)')
+      _conn
+          .execute('CREATE TABLE IF NOT EXISTS ${Table.votes} ($_voteColumns)'),
+      _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.fusions} ($_fusionColumns)')
     ]);
     print('Connected to database');
   }
@@ -330,5 +337,29 @@ class DatabaseService {
         SET votingActivity = @votingActivity
         WHERE ownerAddress = @ownerAddress
         ''', {'votingActivity': votingActivity, 'ownerAddress': ownerAddress});
+  }
+
+  insertPlasmaFusion(
+      AccountBlock block, FusionEntry fusion, String cancelId) async {
+    final json = fusion.toJson();
+    json['isActive'] = true;
+    json['cancelId'] = cancelId;
+    json['address'] = block.address.toString();
+    json['momentumTimestamp'] =
+        block.confirmationDetail?.momentumTimestamp ?? 0;
+    json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? 0;
+    json['momentumHash'] =
+        block.confirmationDetail?.momentumHash.toString() ?? 0;
+    await _conn.execute(
+        'INSERT INTO ${Table.fusions} VALUES (@id, @address, @beneficiary, @momentumHash, @momentumTimestamp, @momentumHeight, @qsrAmount, @expirationHeight, @isActive, @cancelId) ON CONFLICT (id) DO NOTHING',
+        json);
+  }
+
+  setPlasmaFusionInactive(String cancelId) async {
+    await _conn.execute('''
+        UPDATE ${Table.fusions}
+        SET isActive = @isActive
+        WHERE cancelId = @cancelId
+        ''', {'cancelId': cancelId, 'isActive': false});
   }
 }
