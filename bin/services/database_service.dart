@@ -42,7 +42,7 @@ class DatabaseService {
       'address TEXT, tokenStandard TEXT, balance BIGINT, unique(address, tokenStandard)';
 
   final String _tokenColumns =
-      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT';
+      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT, totalSupply BIGINT, maxSupply BIGINT, isBurnable BOOL, isMintable BOOL, isUtility BOOL';
 
   final String _accountBlockColumns =
       '''hash TEXT PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, blockType SMALLINT,
@@ -230,7 +230,7 @@ class DatabaseService {
 
   insertToken(Token token) async {
     await _conn.execute(
-        'INSERT INTO ${Table.tokens} VALUES (@tokenStandard, @name, @symbol, @domain, @decimals, @owner) ON CONFLICT (tokenStandard) DO UPDATE SET domain = @domain',
+        'INSERT INTO ${Table.tokens} VALUES (@tokenStandard, @name, @symbol, @domain, @decimals, @owner, @totalSupply, @maxSupply, @isBurnable, @isMintable, @isUtility) ON CONFLICT (tokenStandard) DO UPDATE SET domain = @domain, totalSupply = @totalSupply, maxSupply = @maxSupply',
         token.toJson());
   }
 
