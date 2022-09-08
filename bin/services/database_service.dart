@@ -340,16 +340,19 @@ class DatabaseService {
   }
 
   insertPlasmaFusion(
-      AccountBlock block, FusionEntry fusion, String cancelId) async {
+      String providerAddress,
+      FusionEntry fusion,
+      String cancelId,
+      String momentumHash,
+      int momentumTimestamp,
+      int momentumHeight) async {
     final json = fusion.toJson();
     json['isActive'] = true;
     json['cancelId'] = cancelId;
-    json['address'] = block.address.toString();
-    json['momentumTimestamp'] =
-        block.confirmationDetail?.momentumTimestamp ?? 0;
-    json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? 0;
-    json['momentumHash'] =
-        block.confirmationDetail?.momentumHash.toString() ?? 0;
+    json['address'] = providerAddress;
+    json['momentumHash'] = momentumHash;
+    json['momentumTimestamp'] = momentumTimestamp;
+    json['momentumHeight'] = momentumHeight;
     await _conn.execute(
         'INSERT INTO ${Table.fusions} VALUES (@id, @address, @beneficiary, @momentumHash, @momentumTimestamp, @momentumHeight, @qsrAmount, @expirationHeight, @isActive, @cancelId) ON CONFLICT (id) DO NOTHING',
         json);

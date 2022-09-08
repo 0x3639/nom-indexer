@@ -296,12 +296,24 @@ class NomIndexer {
               .getEntriesByAddress(block.pairedAccountBlock!.address,
                   pageIndex: pageIndex, pageSize: pageSize);
           await Future.forEach(entries.list, (FusionEntry? fusion) async {
-            if (data.inputs['address'] ==
-                (fusion?.beneficiary.toString() ?? '')) {
-              await DatabaseService().insertPlasmaFusion(
-                  block.pairedAccountBlock!,
-                  fusion!,
-                  _getFusionCancelId(fusion.id));
+            if (fusion != null &&
+                data.inputs['address'] == fusion.beneficiary.toString()) {
+              // TODO: Don't use hardcoded value for expiration time.
+              const fusionExpirationTime = 3600;
+              final fuseMomentum = await _node.ledger.getMomentumsByHeight(
+                  fusion.expirationHeight - fusionExpirationTime, 1);
+              if (fuseMomentum.count > 0) {
+                await DatabaseService().insertPlasmaFusion(
+                    block.pairedAccountBlock!.address.toString(),
+                    fusion,
+                    _getFusionCancelId(fusion.id),
+                    fuseMomentum.list[0].hash.toString(),
+                    fuseMomentum.list[0].timestamp,
+                    fuseMomentum.list[0].height);
+              } else {
+                print(
+                    'Fusion block not found for fusion ${fusion.id.toString()}');
+              }
             }
           });
           if (entries.list.length < pageSize) {
