@@ -11,11 +11,14 @@ class Table {
   static String get accountBlocks => 'AccountBlocks';
   static String get pillars => 'Pillars';
   static String get sentinels => 'Sentinels';
+  static String get stakes => 'Stakes';
   static String get tokens => 'Tokens';
   static String get projects => 'Projects';
   static String get projectPhases => 'ProjectPhases';
   static String get votes => 'Votes';
   static String get fusions => 'Fusions';
+  static String get cumulativeRewards => 'CumulativeRewards';
+  static String get rewardTransactions => 'RewardTransactions';
 }
 
 class DatabaseService {
@@ -58,6 +61,9 @@ class DatabaseService {
   final String _sentinelColumns =
       '''owner TEXT PRIMARY KEY, registrationTimestamp BIGINT, isRevocable BOOL, revokeCooldown TEXT, active BOOL''';
 
+  final String _stakeColumns =
+      '''id TEXT PRIMARY KEY, address TEXT, startTimestamp BIGINT, expirationTimestamp BIGINT, znnAmount BIGINT, durationInSec INT, isActive BOOL, cancelId TEXT''';
+
   final String _projectColumns =
       '''id TEXT PRIMARY KEY, votingId TEXT, owner TEXT, name TEXT, description TEXT, url TEXT, znnFundsNeeded BIGINT, qsrFundsNeeded BIGINT,
       creationTimestamp BIGINT, lastUpdateTimestamp BIGINT, status SMALLINT, yesVotes SMALLINT DEFAULT 0 NOT NULL, noVotes SMALLINT DEFAULT 0 NOT NULL, totalVotes SMALLINT DEFAULT 0 NOT NULL''';
@@ -71,6 +77,12 @@ class DatabaseService {
 
   final String _fusionColumns =
       '''id TEXT PRIMARY KEY, address TEXT, beneficiary TEXT, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, qsrAmount BIGINT, expirationHeight BIGINT, isActive BOOL, cancelId TEXT''';
+
+  final String _cumulativeRewardColumns =
+      '''id SERIAL PRIMARY KEY, address TEXT, rewardType SMALLINT, amount BIGINT, tokenStandard TEXT''';
+
+  final String _rewardTransactionColumns =
+      '''hash TEXT PRIMARY KEY, address TEXT, rewardType SMALLINT, momentumTimestamp BIGINT, momentumHeight BIGINT, amount BIGINT, tokenStandard TEXT''';
 
   initialize() async {
     _conn = await connect(_uri);
@@ -90,14 +102,22 @@ class DatabaseService {
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.sentinels} ($_sentinelColumns)'),
       _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.stakes} ($_stakeColumns)'),
+      _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.projects} ($_projectColumns)'),
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.projectPhases} ($_projectPhaseColumns)'),
       _conn
           .execute('CREATE TABLE IF NOT EXISTS ${Table.votes} ($_voteColumns)'),
       _conn.execute(
-          'CREATE TABLE IF NOT EXISTS ${Table.fusions} ($_fusionColumns)')
+          'CREATE TABLE IF NOT EXISTS ${Table.fusions} ($_fusionColumns)'),
+      _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.cumulativeRewards} ($_cumulativeRewardColumns)'),
+      _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.rewardTransactions} ($_rewardTransactionColumns)'),
     ]);
+    await _conn.execute(
+        'CREATE UNIQUE INDEX ON ${Table.cumulativeRewards} (address, rewardType, tokenStandard)');
     print('Connected to database');
   }
 
@@ -147,6 +167,30 @@ class DatabaseService {
         'SELECT DISTINCT phaseId FROM votes where voterAddress = @voterAddress and phaseId LIKE ANY (@ids)',
         {'voterAddress': voterAddress, 'ids': ids}).toList();
     return r.isNotEmpty ? r.length : 0;
+  }
+
+  Future<dynamic> getRewardDetails(String receiveBlockHash) async {
+    final rewardContracts = [
+      'z1qxemdeddedxpyllarxxxxxxxxxxxxxxxsy3fmg',
+      'z1qxemdeddedxsentynelxxxxxxxxxxxxxwy0r2r',
+      'z1qxemdeddedxstakexxxxxxxxxxxxxxxxjv8v62'
+    ];
+    final r = await _conn.query(
+        '''SELECT T1.amount as rewardAmount, T2.address as source, T1.tokenStandard
+                  FROM accountblocks T1
+                  INNER JOIN accountBlocks T2
+                    ON T1.descendantOf = T2.pairedAccountBlock and T2.method = 'Mint'
+                  WHERE T1.hash = @hash and (T1.tokenStandard = 'zts1znnxxxxxxxxxxxxx9z4ulx' or T1.tokenStandard = 'zts1qsrxxxxxxxxxxxxxmrhjll') and T2.address = ANY(@contracts)
+                  ORDER BY T1.momentumHeight DESC LIMIT 1''',
+        {'hash': receiveBlockHash, 'contracts': rewardContracts}).toList();
+    if (r.isNotEmpty) {
+      return {
+        'rewardAmount': r[0][0],
+        'source': r[0][1],
+        'tokenStandard': r[0][2]
+      };
+    }
+    return {};
   }
 
   insertMomentum(Momentum momentum) async {
@@ -282,6 +326,36 @@ class DatabaseService {
         ''', json);
   }
 
+  insertStake(
+      String id,
+      String address,
+      int startTimestamp,
+      int expirationTimestamp,
+      int znnAmount,
+      int durationInSec,
+      String cancelId) async {
+    final json = {};
+    json['id'] = id;
+    json['address'] = address;
+    json['startTimestamp'] = startTimestamp;
+    json['expirationTimestamp'] = expirationTimestamp;
+    json['znnAmount'] = znnAmount;
+    json['durationInSec'] = durationInSec;
+    json['isActive'] = true;
+    json['cancelId'] = cancelId;
+    await _conn.execute(
+        'INSERT INTO ${Table.stakes} VALUES (@id, @address, @startTimestamp, @expirationTimestamp, @znnAmount, @durationInSec, @isActive, @cancelId) ON CONFLICT (id) DO NOTHING',
+        json);
+  }
+
+  setStakeInactive(String cancelId) async {
+    await _conn.execute('''
+        UPDATE ${Table.stakes}
+        SET isActive = @isActive
+        WHERE cancelId = @cancelId
+        ''', {'cancelId': cancelId, 'isActive': false});
+  }
+
   insertProject(Project project, String votingId) async {
     final json = project.toJson();
     json['votingId'] = votingId;
@@ -364,5 +438,38 @@ class DatabaseService {
         SET isActive = @isActive
         WHERE cancelId = @cancelId
         ''', {'cancelId': cancelId, 'isActive': false});
+  }
+
+  updateCumulativeRewards(
+      String address, int rewardType, int amount, String tokenStandard) async {
+    final json = {};
+    json['address'] = address;
+    json['rewardType'] = rewardType;
+    json['amount'] = amount;
+    json['tokenStandard'] = tokenStandard;
+    await _conn.execute(
+        'INSERT INTO ${Table.cumulativeRewards} VALUES (DEFAULT, @address, @rewardType, @amount, @tokenStandard) ON CONFLICT (address, rewardType, tokenStandard) DO UPDATE SET amount = cumulativeRewards.amount + @amount',
+        json);
+  }
+
+  insertRewardTransaction(
+      String hash,
+      String address,
+      int rewardType,
+      int momentumTimestamp,
+      int momentumHeight,
+      int amount,
+      String tokenStandard) async {
+    final json = {};
+    json['hash'] = hash;
+    json['address'] = address;
+    json['rewardType'] = rewardType;
+    json['momentumTimestamp'] = momentumTimestamp;
+    json['momentumHeight'] = momentumHeight;
+    json['amount'] = amount;
+    json['tokenStandard'] = tokenStandard;
+    await _conn.execute(
+        'INSERT INTO ${Table.rewardTransactions} VALUES (@hash, @address, @rewardType, @momentumTimestamp, @momentumHeight, @amount, @tokenStandard) ON CONFLICT (hash) DO NOTHING',
+        json);
   }
 }

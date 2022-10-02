@@ -12,7 +12,7 @@ dart compile exe bin/main.dart
 ```
 
 ## Setup and configuration
-Install PostgreSQL 14 and create a database for the indexer to use.
+Install PostgreSQL 14 and create a database for the indexer to use. Set the setting ´´´synchronous_commit = off´´´ in ´´´postgresql.conf´´´ to improve write speed on the initial indexing.
 
 Make a copy of the example.config.yaml file and name the copy "config.yaml". Set your desired configuration in the file.
 

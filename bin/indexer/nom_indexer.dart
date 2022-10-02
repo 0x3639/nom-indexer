@@ -3,6 +3,8 @@ import 'package:znn_sdk_dart/src/abi/abi.dart';
 import '../services/database_service.dart';
 import 'package:collection/collection.dart';
 
+enum RewardType { Stake, Delegation, Liquidity, Sentinel, Pillar }
+
 class TxData {
   final String method;
   final Map<String, String> inputs;
@@ -28,6 +30,9 @@ class NomIndexer {
     stakeAddress.toString(): Definitions.stake,
     acceleratorAddress.toString(): Definitions.accelerator
   };
+
+  final _emptyAddress = 'z1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsggv2f';
+  final _emptyTokenStandard = 'zts1qqqqqqqqqqqqqqqqtq587y';
 
   sync() async {
     await _updateData();
@@ -73,9 +78,8 @@ class NomIndexer {
   }
 
   _updateData() async {
-    await _updatePillars();
-    await _updateSentinels();
-    await _updateProjects();
+    await Future.wait<dynamic>(
+        [_updatePillars(), _updateSentinels(), _updateProjects()]);
   }
 
   _syncHeight() async {
@@ -102,8 +106,10 @@ class NomIndexer {
     final stopwatch = Stopwatch()..start();
 
     if (momentum.content.isNotEmpty) {
-      await _updateBalances(momentum.content);
-      await _updateAccountBlocks(momentum.content);
+      await Future.wait<dynamic>([
+        _updateBalances(momentum.content),
+        _updateAccountBlocks(momentum.content)
+      ]);
     }
 
     await DatabaseService().insertMomentum(momentum);
@@ -119,16 +125,18 @@ class NomIndexer {
       return _node.ledger.getAccountInfoByAddress(item.address!);
     }).toList());
 
+    List<Future<dynamic>> futures = [];
     await Future.forEach(accountInfos, (AccountInfo ai) async {
       if (ai.balanceInfoList != null) {
         await Future.forEach(ai.balanceInfoList!,
             (BalanceInfoListItem bi) async {
           if (bi.balance != null && bi.balance! >= 0) {
-            await DatabaseService().insertBalance(ai.address, bi);
+            futures.add(DatabaseService().insertBalance(ai.address, bi));
           }
         });
       }
     });
+    await Future.wait<dynamic>(futures);
   }
 
   _updateAccountBlocks(List<AccountHeader> headers) async {
@@ -137,6 +145,7 @@ class NomIndexer {
       return _node.ledger.getAccountBlockByHash(item.hash);
     }).toList());
 
+    List<Future<dynamic>> futures = [];
     await Future.forEach(accountBlocks, (AccountBlock? block) async {
       if (block != null) {
         TxData? decodedData = _tryDecodeTxData(block);
@@ -163,15 +172,21 @@ class NomIndexer {
           decodedData = _tryDecodeTxData(block.pairedAccountBlock!);
 
           if (decodedData != null) {
-            await _indexEmbeddedContracts(block, decodedData);
+            futures.add(_indexEmbeddedContracts(block, decodedData));
           }
+        } else if (block.pairedAccountBlock != null &&
+            block.blockType == BlockTypeEnum.userReceive.index &&
+            block.toAddress.toString() == _emptyAddress &&
+            block.tokenStandard.toString() == _emptyTokenStandard) {
+          futures.add(_indexReceivedRewardTransaction(block));
         }
 
         if (block.token != null) {
-          await DatabaseService().insertToken(block.token!);
+          futures.add(DatabaseService().insertToken(block.token!));
         }
       }
     });
+    await Future.wait<dynamic>(futures);
   }
 
   _updatePillars() async {
@@ -214,6 +229,41 @@ class NomIndexer {
     }
   }
 
+  _indexReceivedRewardTransaction(AccountBlock block) async {
+    final r = await DatabaseService()
+        .getRewardDetails(block.pairedAccountBlock?.hash.toString() ?? '');
+
+    if (r.length == 0) {
+      return;
+    }
+
+    final rewardAmount = r['rewardAmount'];
+    final tokenStandard = r['tokenStandard'];
+    final sourceContract = r['source'];
+
+    RewardType rewardType = RewardType.Stake;
+    if (sourceContract == pillarAddress.toString()) {
+      if (_isPillarWithdrawAddress(block.address.toString())) {
+        rewardType = RewardType.Pillar;
+      } else {
+        rewardType = RewardType.Delegation;
+      }
+    } else if (sourceContract == sentinelAddress.toString()) {
+      rewardType = RewardType.Sentinel;
+    }
+
+    await DatabaseService().updateCumulativeRewards(block.address.toString(),
+        rewardType.index, rewardAmount, tokenStandard);
+    await DatabaseService().insertRewardTransaction(
+        block.hash.toString(),
+        block.address.toString(),
+        rewardType.index,
+        block.confirmationDetail?.momentumTimestamp ?? 0,
+        block.confirmationDetail?.momentumHeight ?? 0,
+        rewardAmount,
+        tokenStandard);
+  }
+
   _indexEmbeddedContracts(AccountBlock block, TxData data) async {
     final contract = block.address.toString();
 
@@ -223,6 +273,8 @@ class NomIndexer {
       await _indexEmbeddedAcceleratorContract(block, data);
     } else if (contract == plasmaAddress.toString()) {
       await _indexEmbeddedPlasmaContract(block, data);
+    } else if (contract == stakeAddress.toString()) {
+      await _indexEmbeddedStakeContract(block, data);
     }
   }
 
@@ -329,6 +381,44 @@ class NomIndexer {
     }
   }
 
+  _indexEmbeddedStakeContract(AccountBlock block, TxData data) async {
+    if (data.method == 'Stake' && data.inputs.isNotEmpty) {
+      if (block.confirmationDetail != null &&
+          data.inputs.containsKey('durationInSec') &&
+          block.pairedAccountBlock != null) {
+        int pageIndex = 0;
+        int pageSize = 100;
+        while (true) {
+          final StakeList entries = await _node.embedded.stake
+              .getEntriesByAddress(block.pairedAccountBlock!.address,
+                  pageIndex: pageIndex, pageSize: pageSize);
+          await Future.forEach(entries.list, (StakeEntry? stake) async {
+            if (stake != null &&
+                stake.id.toString() ==
+                    block.pairedAccountBlock!.hash.toString()) {
+              await DatabaseService().insertStake(
+                  stake.id.toString(),
+                  block.pairedAccountBlock!.address.toString(),
+                  stake.startTimestamp,
+                  stake.expirationTimestamp,
+                  stake.amount,
+                  int.parse(data.inputs['durationInSec']!),
+                  _getStakeCancelId(stake.id));
+            }
+          });
+          if (entries.list.length < pageSize) {
+            break;
+          }
+          pageIndex++;
+        }
+      }
+    } else if (data.method == 'Cancel' && data.inputs.isNotEmpty) {
+      if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
+        await DatabaseService().setStakeInactive(data.inputs['id']!);
+      }
+    }
+  }
+
   TxData? _tryDecodeTxData(AccountBlock block) {
     if (block.data.isEmpty) return null;
 
@@ -393,10 +483,25 @@ class NomIndexer {
     return decoded[0]?.toString() ?? '';
   }
 
+  String _getStakeCancelId(Hash stakeId) {
+    // TODO: Find a better way to map the stake ID with the canceling ID.
+    List<int> encoded =
+        Definitions.stake.encodeFunction('Cancel', [stakeId.getBytes()]);
+    List decoded = Definitions.stake.decodeFunction(encoded);
+    return decoded[0]?.toString() ?? '';
+  }
+
   String _getPillarOwnerAddress(String name) {
     return (_pillars.list.firstWhereOrNull((i) => i.name == (name)))
             ?.ownerAddress
             .toString() ??
         '';
+  }
+
+  bool _isPillarWithdrawAddress(String address) {
+    return ((_pillars.list.firstWhereOrNull(
+                (i) => i.withdrawAddress.toString() == (address)))?.name ??
+            '')
+        .isNotEmpty;
   }
 }
