@@ -150,6 +150,10 @@ class NomIndexer {
       if (block != null) {
         TxData? decodedData = _tryDecodeTxData(block);
 
+        if (block.confirmationDetail == null) {
+          print('Block confirmation detail is null: ${block.hash.toString()}');
+        }
+
         if (block.toAddress.toString() == pillarAddress.toString() &&
             decodedData != null &&
             (decodedData.inputs['name'] ?? '').isNotEmpty &&
@@ -376,7 +380,8 @@ class NomIndexer {
       }
     } else if (data.method == 'CancelFuse' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
-        await DatabaseService().setPlasmaFusionInactive(data.inputs['id']!);
+        await DatabaseService().setPlasmaFusionInactive(
+            data.inputs['id']!, block.pairedAccountBlock!.address.toString());
       }
     }
   }
@@ -414,7 +419,8 @@ class NomIndexer {
       }
     } else if (data.method == 'Cancel' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
-        await DatabaseService().setStakeInactive(data.inputs['id']!);
+        await DatabaseService().setStakeInactive(
+            data.inputs['id']!, block.pairedAccountBlock!.address.toString());
       }
     }
   }

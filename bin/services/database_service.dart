@@ -348,12 +348,12 @@ class DatabaseService {
         json);
   }
 
-  setStakeInactive(String cancelId) async {
+  setStakeInactive(String cancelId, String address) async {
     await _conn.execute('''
         UPDATE ${Table.stakes}
         SET isActive = @isActive
-        WHERE cancelId = @cancelId
-        ''', {'cancelId': cancelId, 'isActive': false});
+        WHERE cancelId = @cancelId and address = @address
+        ''', {'cancelId': cancelId, 'isActive': false, 'address': address});
   }
 
   insertProject(Project project, String votingId) async {
@@ -432,12 +432,12 @@ class DatabaseService {
         json);
   }
 
-  setPlasmaFusionInactive(String cancelId) async {
+  setPlasmaFusionInactive(String cancelId, String address) async {
     await _conn.execute('''
         UPDATE ${Table.fusions}
         SET isActive = @isActive
-        WHERE cancelId = @cancelId
-        ''', {'cancelId': cancelId, 'isActive': false});
+        WHERE cancelId = @cancelId and address = @address
+        ''', {'cancelId': cancelId, 'isActive': false, 'address': address});
   }
 
   updateCumulativeRewards(
