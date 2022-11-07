@@ -45,7 +45,7 @@ class DatabaseService {
       'address TEXT, tokenStandard TEXT, balance BIGINT, unique(address, tokenStandard)';
 
   final String _tokenColumns =
-      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT, totalSupply BIGINT, maxSupply BIGINT, isBurnable BOOL, isMintable BOOL, isUtility BOOL';
+      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT, totalSupply BIGINT, maxSupply BIGINT, isBurnable BOOL, isMintable BOOL, isUtility BOOL, totalBurned BIGINT DEFAULT 0 NOT NULL, lastUpdateTimestamp BIGINT DEFAULT 0 NOT NULL, holderCount BIGINT DEFAULT 0 NOT NULL';
 
   final String _accountBlockColumns =
       '''hash TEXT PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, blockType SMALLINT,
@@ -193,6 +193,14 @@ class DatabaseService {
     return {};
   }
 
+  Future<dynamic> getTokenHolderCount(String tokenStandard) async {
+    List r = await _conn.query('''SELECT COUNT(*)
+            FROM ${Table.balances}
+            WHERE tokenStandard = @tokenStandard and balance > 0
+           ''', {'tokenStandard': tokenStandard}).toList();
+    return r.isNotEmpty ? r[0][0] : 0;
+  }
+
   insertMomentum(Momentum momentum) async {
     final json = momentum.toJson();
     json['txCount'] = momentum.content.length;
@@ -276,6 +284,30 @@ class DatabaseService {
     await _conn.execute(
         'INSERT INTO ${Table.tokens} VALUES (@tokenStandard, @name, @symbol, @domain, @decimals, @owner, @totalSupply, @maxSupply, @isBurnable, @isMintable, @isUtility) ON CONFLICT (tokenStandard) DO UPDATE SET domain = @domain, totalSupply = @totalSupply, maxSupply = @maxSupply',
         token.toJson());
+  }
+
+  updateTokenLastUpdateTimestamp(String tokenStandard, int timestamp) async {
+    await _conn.execute('''
+        UPDATE ${Table.tokens}
+        SET lastUpdateTimestamp = @timestamp
+        WHERE tokenStandard = @tokenStandard
+        ''', {'tokenStandard': tokenStandard, 'timestamp': timestamp});
+  }
+
+  updateTokenBurnAmount(String tokenStandard, int burnAmount) async {
+    await _conn.execute('''
+        UPDATE ${Table.tokens}
+        SET totalBurned = tokens.totalBurned + @burnAmount
+        WHERE tokenStandard = @tokenStandard
+        ''', {'tokenStandard': tokenStandard, 'burnAmount': burnAmount});
+  }
+
+  updateTokenHolderCount(String tokenStandard, int count) async {
+    await _conn.execute('''
+        UPDATE ${Table.tokens}
+        SET holderCount = @count
+        WHERE tokenStandard = @tokenStandard
+        ''', {'count': count, 'tokenStandard': tokenStandard});
   }
 
   insertPillar(PillarInfo pillar) async {

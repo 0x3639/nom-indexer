@@ -77,6 +77,19 @@ class NomIndexer {
     });
   }
 
+  updateTokenHolderCounts() async {
+    final tokens = await _node.embedded.token.getAll();
+    if (tokens.list == null) {
+      return;
+    }
+    await Future.forEach(tokens.list!, (Token token) async {
+      final count = await DatabaseService()
+          .getTokenHolderCount(token.tokenStandard.toString());
+      await DatabaseService()
+          .updateTokenHolderCount(token.tokenStandard.toString(), count);
+    });
+  }
+
   _updateData() async {
     await Future.wait<dynamic>(
         [_updatePillars(), _updateSentinels(), _updateProjects()]);
@@ -279,6 +292,8 @@ class NomIndexer {
       await _indexEmbeddedPlasmaContract(block, data);
     } else if (contract == stakeAddress.toString()) {
       await _indexEmbeddedStakeContract(block, data);
+    } else if (contract == tokenAddress.toString()) {
+      await _indexEmbeddedTokenContract(block, data);
     }
   }
 
@@ -421,6 +436,24 @@ class NomIndexer {
       if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
         await DatabaseService().setStakeInactive(
             data.inputs['id']!, block.pairedAccountBlock!.address.toString());
+      }
+    }
+  }
+
+  _indexEmbeddedTokenContract(AccountBlock block, TxData data) async {
+    if (data.method == 'Burn') {
+      if (block.confirmationDetail != null &&
+          block.pairedAccountBlock != null) {
+        await DatabaseService().updateTokenBurnAmount(
+            block.pairedAccountBlock!.tokenStandard.toString(),
+            block.pairedAccountBlock!.amount);
+      }
+    } else if (data.method == 'UpdateToken' && data.inputs.isNotEmpty) {
+      if (block.confirmationDetail != null &&
+          data.inputs.containsKey('tokenStandard')) {
+        await DatabaseService().updateTokenLastUpdateTimestamp(
+            data.inputs['tokenStandard']!,
+            block.confirmationDetail!.momentumTimestamp);
       }
     }
   }

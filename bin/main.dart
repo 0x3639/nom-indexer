@@ -16,6 +16,7 @@ Future<void> main(List<String> arguments) async {
   final indexer = NomIndexer(node);
   await indexer.sync();
   await indexer.updatePillarVotingActivity();
+  await indexer.updateTokenHolderCounts();
 
   _runIndexer(indexer);
   _runCron(indexer);
@@ -34,6 +35,7 @@ _runCron(NomIndexer indexer) {
   Timer.periodic(Duration(minutes: 10), (Timer t) async {
     t.cancel();
     await indexer.updatePillarVotingActivity();
+    await indexer.updateTokenHolderCounts();
     _runCron(indexer);
   });
 }
