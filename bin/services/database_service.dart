@@ -10,6 +10,7 @@ class Table {
   static String get accounts => 'Accounts';
   static String get accountBlocks => 'AccountBlocks';
   static String get pillars => 'Pillars';
+  static String get pillarUpdates => 'PillarUpdates';
   static String get sentinels => 'Sentinels';
   static String get stakes => 'Stakes';
   static String get tokens => 'Tokens';
@@ -45,7 +46,7 @@ class DatabaseService {
       'address TEXT, tokenStandard TEXT, balance BIGINT, unique(address, tokenStandard)';
 
   final String _tokenColumns =
-      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT, totalSupply BIGINT, maxSupply BIGINT, isBurnable BOOL, isMintable BOOL, isUtility BOOL, totalBurned BIGINT DEFAULT 0 NOT NULL, lastUpdateTimestamp BIGINT DEFAULT 0 NOT NULL, holderCount BIGINT DEFAULT 0 NOT NULL';
+      'tokenStandard TEXT PRIMARY KEY, name TEXT, symbol TEXT, domain TEXT, decimals INT, owner TEXT, totalSupply BIGINT, maxSupply BIGINT, isBurnable BOOL, isMintable BOOL, isUtility BOOL, totalBurned BIGINT DEFAULT 0 NOT NULL, lastUpdateTimestamp BIGINT DEFAULT 0 NOT NULL, holderCount BIGINT DEFAULT 0 NOT NULL, transactionCount BIGINT DEFAULT 0 NOT NULL';
 
   final String _accountBlockColumns =
       '''hash TEXT PRIMARY KEY, momentumHash TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, blockType SMALLINT,
@@ -57,6 +58,10 @@ class DatabaseService {
       giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
       revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
       slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, isRevoked BOOL DEFAULT false NOT NULL''';
+
+  final String _pillarUpdateColumns =
+      '''id SERIAL PRIMARY KEY, name TEXT, ownerAddress TEXT, producerAddress TEXT, withdrawAddress TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, momentumHash TEXT,
+      giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT''';
 
   final String _sentinelColumns =
       '''owner TEXT PRIMARY KEY, registrationTimestamp BIGINT, isRevocable BOOL, revokeCooldown TEXT, active BOOL''';
@@ -82,7 +87,7 @@ class DatabaseService {
       '''id SERIAL PRIMARY KEY, address TEXT, rewardType SMALLINT, amount BIGINT, tokenStandard TEXT''';
 
   final String _rewardTransactionColumns =
-      '''hash TEXT PRIMARY KEY, address TEXT, rewardType SMALLINT, momentumTimestamp BIGINT, momentumHeight BIGINT, amount BIGINT, tokenStandard TEXT''';
+      '''hash TEXT PRIMARY KEY, address TEXT, rewardType SMALLINT, momentumTimestamp BIGINT, momentumHeight BIGINT, accountHeight BIGINT, amount BIGINT, tokenStandard TEXT, sourceAddress TEXT''';
 
   initialize() async {
     _conn = await connect(_uri);
@@ -99,6 +104,8 @@ class DatabaseService {
           'CREATE TABLE IF NOT EXISTS ${Table.accountBlocks} ($_accountBlockColumns)'),
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.pillars} ($_pillarColumns)'),
+      _conn.execute(
+          'CREATE TABLE IF NOT EXISTS ${Table.pillarUpdates} ($_pillarUpdateColumns)'),
       _conn.execute(
           'CREATE TABLE IF NOT EXISTS ${Table.sentinels} ($_sentinelColumns)'),
       _conn.execute(
@@ -180,6 +187,8 @@ class DatabaseService {
                   FROM accountblocks T1
                   INNER JOIN accountBlocks T2
                     ON T1.descendantOf = T2.pairedAccountBlock and T2.method = 'Mint'
+                  INNER JOIN accountBlocks T3
+                    ON T2.descendantOf = T3.pairedAccountBlock and T3.method = 'CollectReward'
                   WHERE T1.hash = @hash and (T1.tokenStandard = 'zts1znnxxxxxxxxxxxxx9z4ulx' or T1.tokenStandard = 'zts1qsrxxxxxxxxxxxxxmrhjll') and T2.address = ANY(@contracts)
                   ORDER BY T1.momentumHeight DESC LIMIT 1''',
         {'hash': receiveBlockHash, 'contracts': rewardContracts}).toList();
@@ -199,6 +208,33 @@ class DatabaseService {
             WHERE tokenStandard = @tokenStandard and balance > 0
            ''', {'tokenStandard': tokenStandard}).toList();
     return r.isNotEmpty ? r[0][0] : 0;
+  }
+
+  Future<dynamic> getPillarSpawnTimestamp(String withdrawAddress) async {
+    List r = await _conn.query('''SELECT spawnTimestamp
+            FROM ${Table.pillars}
+            WHERE withdrawAddress = @withdrawAddress
+           ''', {'withdrawAddress': withdrawAddress}).toList();
+    return r.isNotEmpty ? r[0][0] : -1;
+  }
+
+  Future<dynamic> getPillarRevokeTimestamp(String pillar) async {
+    List r = await _conn.query('''SELECT revokeTimestamp
+            FROM ${Table.pillars}
+            WHERE ownerAddress = @ownerAddress
+           ''', {'ownerAddress': pillar}).toList();
+    return r.isNotEmpty ? r[0][0] : 0;
+  }
+
+  Future<dynamic> getPillarOwnerAddressAtHeight(
+      String withdrawAddress, int height) async {
+    List r = await _conn.query('''SELECT ownerAddress
+            FROM ${Table.pillarUpdates}
+            WHERE withdrawAddress = @withdrawAddress and momentumHeight <= @height
+            ORDER BY id DESC LIMIT 1 
+           ''',
+        {'withdrawAddress': withdrawAddress, 'height': height}).toList();
+    return r.isNotEmpty ? r[0][0] : '';
   }
 
   insertMomentum(Momentum momentum) async {
@@ -249,8 +285,8 @@ class DatabaseService {
     json['momentumHash'] =
         block.confirmationDetail?.momentumHash.toString() ?? '';
     json['momentumTimestamp'] =
-        block.confirmationDetail?.momentumTimestamp ?? '';
-    json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? '';
+        block.confirmationDetail?.momentumTimestamp ?? 0;
+    json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? 0;
 
     await _conn.execute('''
         INSERT INTO ${Table.accountBlocks}
@@ -310,6 +346,14 @@ class DatabaseService {
         ''', {'count': count, 'tokenStandard': tokenStandard});
   }
 
+  incrementTokenTransactionCount(String tokenStandard) async {
+    await _conn.execute('''
+        UPDATE ${Table.tokens}
+        SET transactionCount = tokens.transactionCount + 1
+        WHERE tokenStandard = @tokenStandard
+        ''', {'tokenStandard': tokenStandard});
+  }
+
   insertPillar(PillarInfo pillar) async {
     final json = pillar.toJson();
     json['giveMomentumRewardPercentage'] = pillar.giveMomentumRewardPercentage;
@@ -341,12 +385,48 @@ class DatabaseService {
     });
   }
 
-  setPillarAsRevoked(String ownerAddress) async {
+  setPillarAsRevoked(
+      String ownerAddress, String name, int revokeTimestamp) async {
+    '''ownerAddress TEXT PRIMARY KEY, producerAddress TEXT, withdrawAddress TEXT, name TEXT, rank INT,
+      giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
+      revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
+      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, isRevoked BOOL DEFAULT false NOT NULL''';
+
     await _conn.execute('''
-        UPDATE ${Table.pillars}
-        SET isRevoked = @isRevoked
-        WHERE ownerAddress = @ownerAddress
-        ''', {'isRevoked': true, 'ownerAddress': ownerAddress});
+        INSERT INTO ${Table.pillars} VALUES (@ownerAddress, '', '', @name, 0, 0, 0, false, 0, @revokeTimestamp, 0, 0, 0, 0, 0, 0, @isRevoked)
+        ON CONFLICT (ownerAddress) DO UPDATE SET producerAddress = '', withdrawAddress = '', name = @name,
+        rank = 0, giveMomentumRewardPercentage = 0, giveDelegateRewardPercentage = 0,
+        isRevocable = false, revokeCooldown = 0, revokeTimestamp = @revokeTimestamp, weight = 0,
+        epochProducedMomentums = 0, epochExpectedMomentums = 0, isRevoked = @isRevoked
+        ''', {
+      'isRevoked': true,
+      'ownerAddress': ownerAddress,
+      'name': name,
+      'revokeTimestamp': revokeTimestamp
+    });
+  }
+
+  insertPillarUpdate(
+      String ownerAddress,
+      int momentumTimestamp,
+      int momentumHeight,
+      String momentumHash,
+      Map<String, dynamic> inputs) async {
+    final json = {};
+    json['name'] = inputs['name'];
+    json['ownerAddress'] = ownerAddress;
+    json['withdrawAddress'] = inputs['rewardAddress'];
+    json['producerAddress'] = inputs['producerAddress'];
+    json['momentumTimestamp'] = momentumTimestamp;
+    json['momentumHeight'] = momentumHeight;
+    json['momentumHash'] = momentumHash;
+    json['giveMomentumRewardPercentage'] =
+        int.parse(inputs['giveBlockRewardPercentage']);
+    json['giveDelegateRewardPercentage'] =
+        int.parse(inputs['giveDelegateRewardPercentage']);
+    await _conn.execute('''
+        INSERT INTO ${Table.pillarUpdates} VALUES (DEFAULT, @name, @ownerAddress, @producerAddress, @withdrawAddress, @momentumTimestamp, @momentumHeight, @momentumHash, @giveMomentumRewardPercentage, @giveDelegateRewardPercentage)
+        ''', json);
   }
 
   insertSentinel(SentinelInfo sentinel) async {
@@ -490,18 +570,22 @@ class DatabaseService {
       int rewardType,
       int momentumTimestamp,
       int momentumHeight,
+      int accountHeight,
       int amount,
-      String tokenStandard) async {
+      String tokenStandard,
+      String sourceAddress) async {
     final json = {};
     json['hash'] = hash;
     json['address'] = address;
     json['rewardType'] = rewardType;
     json['momentumTimestamp'] = momentumTimestamp;
     json['momentumHeight'] = momentumHeight;
+    json['accountHeight'] = accountHeight;
     json['amount'] = amount;
     json['tokenStandard'] = tokenStandard;
+    json['sourceAddress'] = sourceAddress;
     await _conn.execute(
-        'INSERT INTO ${Table.rewardTransactions} VALUES (@hash, @address, @rewardType, @momentumTimestamp, @momentumHeight, @amount, @tokenStandard) ON CONFLICT (hash) DO NOTHING',
+        'INSERT INTO ${Table.rewardTransactions} VALUES (@hash, @address, @rewardType, @momentumTimestamp, @momentumHeight, @accountHeight, @amount, @tokenStandard, @sourceAddress) ON CONFLICT (hash) DO NOTHING',
         json);
   }
 }

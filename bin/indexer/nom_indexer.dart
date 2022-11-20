@@ -32,7 +32,10 @@ class NomIndexer {
   };
 
   final _emptyAddress = 'z1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsggv2f';
+  final _liquidityTreasuryAddress = 'z1qqw8f3qxx9zg92xgckqdpfws3dw07d26afsj74';
   final _emptyTokenStandard = 'zts1qqqqqqqqqqqqqqqqtq587y';
+
+  final List<Future<dynamic>> _dbBatch = [];
 
   sync() async {
     await _updateData();
@@ -104,13 +107,21 @@ class NomIndexer {
         break;
       }
 
-      final momentums = (await _node.ledger
-              .getMomentumsByHeight(dbHeight < 2 ? 2 : dbHeight + 1, 100))
-          .list;
-      await Future.forEach(momentums, (Momentum m) async {
-        print('Fetched momentum: ' + m.height.toString());
-        await _processMomentum(m);
-      });
+      if (dbHeight > 0) {
+        final momentums =
+            (await _node.ledger.getMomentumsByHeight(dbHeight + 1, 100)).list;
+        await Future.forEach(momentums, (Momentum m) async {
+          print('Fetched momentum: ' + m.height.toString());
+          await _processMomentum(m);
+        });
+      } else {
+        // Only way to get the first momentum
+        final m = await _node.ledger.getMomentumBeforeTime(1637755210);
+        if (m != null) {
+          print('Fetched first momentum');
+          await _processMomentum(m);
+        }
+      }
     }
   }
 
@@ -118,13 +129,14 @@ class NomIndexer {
     if (momentum == null) return;
     final stopwatch = Stopwatch()..start();
 
+    _dbBatch.clear();
+
     if (momentum.content.isNotEmpty) {
-      await Future.wait<dynamic>([
-        _updateBalances(momentum.content),
-        _updateAccountBlocks(momentum.content)
-      ]);
+      await _updateBalances(momentum.content);
+      await _updateAccountBlocks(momentum.content);
     }
 
+    await Future.wait<dynamic>(_dbBatch);
     await DatabaseService().insertMomentum(momentum);
 
     print(
@@ -133,32 +145,30 @@ class NomIndexer {
   }
 
   _updateBalances(List<AccountHeader> headers) async {
-    final List<AccountInfo> accountInfos =
-        await Future.wait(headers.map((item) {
-      return _node.ledger.getAccountInfoByAddress(item.address!);
-    }).toList());
+    final List<AccountInfo> accountInfos = [];
+    await Future.forEach(headers, (AccountHeader item) async {
+      accountInfos
+          .add(await _node.ledger.getAccountInfoByAddress(item.address!));
+    });
 
-    List<Future<dynamic>> futures = [];
     await Future.forEach(accountInfos, (AccountInfo ai) async {
       if (ai.balanceInfoList != null) {
         await Future.forEach(ai.balanceInfoList!,
             (BalanceInfoListItem bi) async {
           if (bi.balance != null && bi.balance! >= 0) {
-            futures.add(DatabaseService().insertBalance(ai.address, bi));
+            _dbBatch.add(DatabaseService().insertBalance(ai.address, bi));
           }
         });
       }
     });
-    await Future.wait<dynamic>(futures);
   }
 
   _updateAccountBlocks(List<AccountHeader> headers) async {
-    final List<AccountBlock?> accountBlocks =
-        await Future.wait(headers.map((item) {
-      return _node.ledger.getAccountBlockByHash(item.hash);
-    }).toList());
+    final List<AccountBlock?> accountBlocks = [];
+    await Future.forEach(headers, (AccountHeader item) async {
+      accountBlocks.add(await _node.ledger.getAccountBlockByHash(item.hash));
+    });
 
-    List<Future<dynamic>> futures = [];
     await Future.forEach(accountBlocks, (AccountBlock? block) async {
       if (block != null) {
         TxData? decodedData = _tryDecodeTxData(block);
@@ -180,8 +190,8 @@ class NomIndexer {
               () => _getPillarOwnerAddress(decodedData!.inputs['name']!));
         }
 
-        await DatabaseService().insertAccount(block);
-        await DatabaseService().insertAccountBlock(block, decodedData);
+        _dbBatch.add(DatabaseService().insertAccount(block));
+        _dbBatch.add(DatabaseService().insertAccountBlock(block, decodedData));
 
         if (block.blockType == BlockTypeEnum.contractReceive.index &&
             block.pairedAccountBlock != null &&
@@ -189,21 +199,26 @@ class NomIndexer {
           decodedData = _tryDecodeTxData(block.pairedAccountBlock!);
 
           if (decodedData != null) {
-            futures.add(_indexEmbeddedContracts(block, decodedData));
+            await _indexEmbeddedContracts(block, decodedData);
           }
         } else if (block.pairedAccountBlock != null &&
-            block.blockType == BlockTypeEnum.userReceive.index &&
-            block.toAddress.toString() == _emptyAddress &&
-            block.tokenStandard.toString() == _emptyTokenStandard) {
-          futures.add(_indexReceivedRewardTransaction(block));
+            block.blockType == BlockTypeEnum.userReceive.index) {
+          if (block.pairedAccountBlock!.address.toString() ==
+              _liquidityTreasuryAddress) {
+            await _indexReceivedLiquidityRewardTransaction(block);
+          } else if (block.pairedAccountBlock!.blockType ==
+                  BlockTypeEnum.contractSend.index &&
+              block.toAddress.toString() == _emptyAddress &&
+              block.tokenStandard.toString() == _emptyTokenStandard) {
+            await _indexReceivedRewardTransaction(block);
+          }
         }
 
         if (block.token != null) {
-          futures.add(DatabaseService().insertToken(block.token!));
+          _dbBatch.add(_updateToken(block));
         }
       }
     });
-    await Future.wait<dynamic>(futures);
   }
 
   _updatePillars() async {
@@ -246,6 +261,12 @@ class NomIndexer {
     }
   }
 
+  _updateToken(AccountBlock block) async {
+    await DatabaseService().insertToken(block.token!);
+    await DatabaseService()
+        .incrementTokenTransactionCount(block.token!.tokenStandard.toString());
+  }
+
   _indexReceivedRewardTransaction(AccountBlock block) async {
     final r = await DatabaseService()
         .getRewardDetails(block.pairedAccountBlock?.hash.toString() ?? '');
@@ -256,29 +277,60 @@ class NomIndexer {
 
     final rewardAmount = r['rewardAmount'];
     final tokenStandard = r['tokenStandard'];
-    final sourceContract = r['source'];
+    final sourceAddress = r['source'];
 
     RewardType rewardType = RewardType.Stake;
-    if (sourceContract == pillarAddress.toString()) {
-      if (_isPillarWithdrawAddress(block.address.toString())) {
+    if (sourceAddress == pillarAddress.toString()) {
+      if (await _isPillarWithdrawAddress(
+          block.address.toString(),
+          block.confirmationDetail?.momentumHeight ?? 0,
+          block.confirmationDetail?.momentumTimestamp ?? 0)) {
         rewardType = RewardType.Pillar;
       } else {
         rewardType = RewardType.Delegation;
       }
-    } else if (sourceContract == sentinelAddress.toString()) {
+    } else if (sourceAddress == sentinelAddress.toString()) {
       rewardType = RewardType.Sentinel;
     }
 
-    await DatabaseService().updateCumulativeRewards(block.address.toString(),
-        rewardType.index, rewardAmount, tokenStandard);
-    await DatabaseService().insertRewardTransaction(
+    _dbBatch.add(DatabaseService().updateCumulativeRewards(
+        block.address.toString(),
+        rewardType.index,
+        rewardAmount,
+        tokenStandard));
+    _dbBatch.add(DatabaseService().insertRewardTransaction(
         block.hash.toString(),
         block.address.toString(),
         rewardType.index,
         block.confirmationDetail?.momentumTimestamp ?? 0,
         block.confirmationDetail?.momentumHeight ?? 0,
+        block.height,
         rewardAmount,
-        tokenStandard);
+        tokenStandard,
+        sourceAddress));
+  }
+
+  _indexReceivedLiquidityRewardTransaction(AccountBlock block) async {
+    final rewardAmount = block.pairedAccountBlock!.amount;
+    final tokenStandard = block.pairedAccountBlock!.tokenStandard.toString();
+    final sourceAddress = block.pairedAccountBlock!.address.toString();
+    final rewardType = RewardType.Liquidity;
+
+    _dbBatch.add(DatabaseService().updateCumulativeRewards(
+        block.address.toString(),
+        rewardType.index,
+        rewardAmount,
+        tokenStandard));
+    _dbBatch.add(DatabaseService().insertRewardTransaction(
+        block.hash.toString(),
+        block.address.toString(),
+        rewardType.index,
+        block.confirmationDetail?.momentumTimestamp ?? 0,
+        block.confirmationDetail?.momentumHeight ?? 0,
+        block.height,
+        rewardAmount,
+        tokenStandard,
+        sourceAddress));
   }
 
   _indexEmbeddedContracts(AccountBlock block, TxData data) async {
@@ -300,14 +352,14 @@ class NomIndexer {
   _indexEmbeddedPillarContract(AccountBlock block, TxData data) async {
     if (data.method == 'Delegate' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null) {
-        await DatabaseService().updateAccountDelegate(
+        _dbBatch.add(DatabaseService().updateAccountDelegate(
             block.pairedAccountBlock?.address.toString() ?? '',
             _getPillarOwnerAddress(data.inputs['name'] ?? ''),
-            block.confirmationDetail!.momentumTimestamp);
+            block.confirmationDetail!.momentumTimestamp));
       }
     } else if (data.method == 'Undelegate') {
-      await DatabaseService().updateAccountDelegate(
-          block.pairedAccountBlock?.address.toString() ?? '', '', 0);
+      _dbBatch.add(DatabaseService().updateAccountDelegate(
+          block.pairedAccountBlock?.address.toString() ?? '', '', 0));
     } else if (data.method == 'Register' || data.method == 'RegisterLegacy') {
       if (block.descendantBlocks.isNotEmpty) {
         final descendant = block.descendantBlocks[0];
@@ -315,16 +367,31 @@ class NomIndexer {
         if (descendant.toAddress == tokenAddress &&
             _tryDecodeTxData(descendant)?.method == 'Burn') {
           if (block.confirmationDetail != null) {
-            await DatabaseService().updatePillarSpawnInfo(
+            _dbBatch.add(DatabaseService().updatePillarSpawnInfo(
                 _getPillarOwnerAddress(data.inputs['name'] ?? ''),
                 block.confirmationDetail!.momentumTimestamp,
-                descendant.amount);
+                descendant.amount));
+            _dbBatch.add(DatabaseService().insertPillarUpdate(
+                block.pairedAccountBlock?.address.toString() ?? '',
+                block.confirmationDetail!.momentumTimestamp,
+                block.confirmationDetail!.momentumHeight,
+                block.confirmationDetail!.momentumHash.toString(),
+                data.inputs));
           }
         }
       }
     } else if (data.method == 'Revoke') {
-      await DatabaseService().setPillarAsRevoked(
-          _getPillarOwnerAddress(data.inputs['name'] ?? ''));
+      _dbBatch.add(DatabaseService().setPillarAsRevoked(
+          block.pairedAccountBlock?.address.toString() ?? '',
+          data.inputs['name'] ?? '',
+          block.confirmationDetail!.momentumTimestamp));
+    } else if (data.method == 'UpdatePillar') {
+      _dbBatch.add(DatabaseService().insertPillarUpdate(
+          block.pairedAccountBlock?.address.toString() ?? '',
+          block.confirmationDetail!.momentumTimestamp,
+          block.confirmationDetail!.momentumHeight,
+          block.confirmationDetail!.momentumHash.toString(),
+          data.inputs));
     }
   }
 
@@ -348,8 +415,13 @@ class NomIndexer {
             data.inputs.containsKey('vote')) {
           final voterAddress = _getPillarOwnerAddress(data.inputs['name']!);
 
-          await DatabaseService().insertVote(block, voterAddress, projectId,
-              phaseId, data.inputs['id']!, int.parse(data.inputs['vote']!));
+          _dbBatch.add(DatabaseService().insertVote(
+              block,
+              voterAddress,
+              projectId,
+              phaseId,
+              data.inputs['id']!,
+              int.parse(data.inputs['vote']!)));
         }
       }
     }
@@ -374,13 +446,13 @@ class NomIndexer {
               final fuseMomentum = await _node.ledger.getMomentumsByHeight(
                   fusion.expirationHeight - fusionExpirationTime, 1);
               if (fuseMomentum.count > 0) {
-                await DatabaseService().insertPlasmaFusion(
+                _dbBatch.add(DatabaseService().insertPlasmaFusion(
                     block.pairedAccountBlock!.address.toString(),
                     fusion,
                     _getFusionCancelId(fusion.id),
                     fuseMomentum.list[0].hash.toString(),
                     fuseMomentum.list[0].timestamp,
-                    fuseMomentum.list[0].height);
+                    fuseMomentum.list[0].height));
               } else {
                 print(
                     'Fusion block not found for fusion ${fusion.id.toString()}');
@@ -395,8 +467,8 @@ class NomIndexer {
       }
     } else if (data.method == 'CancelFuse' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
-        await DatabaseService().setPlasmaFusionInactive(
-            data.inputs['id']!, block.pairedAccountBlock!.address.toString());
+        _dbBatch.add(DatabaseService().setPlasmaFusionInactive(
+            data.inputs['id']!, block.pairedAccountBlock!.address.toString()));
       }
     }
   }
@@ -416,14 +488,14 @@ class NomIndexer {
             if (stake != null &&
                 stake.id.toString() ==
                     block.pairedAccountBlock!.hash.toString()) {
-              await DatabaseService().insertStake(
+              _dbBatch.add(DatabaseService().insertStake(
                   stake.id.toString(),
                   block.pairedAccountBlock!.address.toString(),
                   stake.startTimestamp,
                   stake.expirationTimestamp,
                   stake.amount,
                   int.parse(data.inputs['durationInSec']!),
-                  _getStakeCancelId(stake.id));
+                  _getStakeCancelId(stake.id)));
             }
           });
           if (entries.list.length < pageSize) {
@@ -434,8 +506,8 @@ class NomIndexer {
       }
     } else if (data.method == 'Cancel' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null && data.inputs.containsKey('id')) {
-        await DatabaseService().setStakeInactive(
-            data.inputs['id']!, block.pairedAccountBlock!.address.toString());
+        _dbBatch.add(DatabaseService().setStakeInactive(
+            data.inputs['id']!, block.pairedAccountBlock!.address.toString()));
       }
     }
   }
@@ -444,16 +516,16 @@ class NomIndexer {
     if (data.method == 'Burn') {
       if (block.confirmationDetail != null &&
           block.pairedAccountBlock != null) {
-        await DatabaseService().updateTokenBurnAmount(
+        _dbBatch.add(DatabaseService().updateTokenBurnAmount(
             block.pairedAccountBlock!.tokenStandard.toString(),
-            block.pairedAccountBlock!.amount);
+            block.pairedAccountBlock!.amount));
       }
     } else if (data.method == 'UpdateToken' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null &&
           data.inputs.containsKey('tokenStandard')) {
-        await DatabaseService().updateTokenLastUpdateTimestamp(
+        _dbBatch.add(DatabaseService().updateTokenLastUpdateTimestamp(
             data.inputs['tokenStandard']!,
-            block.confirmationDetail!.momentumTimestamp);
+            block.confirmationDetail!.momentumTimestamp));
       }
     }
   }
@@ -537,10 +609,26 @@ class NomIndexer {
         '';
   }
 
-  bool _isPillarWithdrawAddress(String address) {
-    return ((_pillars.list.firstWhereOrNull(
-                (i) => i.withdrawAddress.toString() == (address)))?.name ??
-            '')
-        .isNotEmpty;
+  Future<bool> _isPillarWithdrawAddress(
+      String address, int txHeight, int txTimestamp) async {
+    final ownerAddress = await DatabaseService()
+        .getPillarOwnerAddressAtHeight(address, txHeight);
+
+    final spawnTimestamp =
+        await DatabaseService().getPillarSpawnTimestamp(address);
+
+    // Check if Pillar exists at height
+    if (ownerAddress.isNotEmpty || spawnTimestamp >= 0) {
+      final revokeTimestamp =
+          await DatabaseService().getPillarRevokeTimestamp(ownerAddress);
+      // Check if Pillar already revoked
+      if (revokeTimestamp > 0 && txTimestamp >= revokeTimestamp) {
+        return false;
+      }
+      return true;
+    }
+
+    // No withdraw address exists at height
+    return false;
   }
 }
