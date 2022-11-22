@@ -43,27 +43,31 @@ class NomIndexer {
   }
 
   updatePillarVotingActivity() async {
-    final List<String> projectIds = [];
-    final List<String> phaseIds = [];
+    await Future.forEach(_pillars.list, (PillarInfo pillar) async {
+      final List<String> projectIds = [];
+      final List<String> phaseIds = [];
+      int votes = 0;
 
-    for (final project in _projects.list) {
-      if (project.status == AcceleratorProjectStatus.voting) {
-        projectIds.add(project.id.toString());
-      }
-      for (final phase in project.phases) {
-        if (phase.status == AcceleratorProjectStatus.voting) {
-          phaseIds.add(phase.id.toString());
+      final pillarSpawnTime = await DatabaseService()
+          .getPillarSpawnTimestampByOwner(pillar.ownerAddress.toString());
+
+      for (final project in _projects.list) {
+        if (project.creationTimestamp >= pillarSpawnTime) {
+          projectIds.add(project.id.toString());
+        }
+
+        for (final phase in project.phases) {
+          if (phase.creationTimestamp >= pillarSpawnTime) {
+            phaseIds.add(phase.id.toString());
+          }
         }
       }
-    }
-
-    await Future.forEach(_pillars.list, (PillarInfo pillar) async {
-      int votes = 0;
 
       if (projectIds.isNotEmpty) {
         votes += await DatabaseService().getVoteCountForProjects(
             pillar.ownerAddress.toString(), projectIds);
       }
+
       if (phaseIds.isNotEmpty) {
         votes += await DatabaseService()
             .getVoteCountForPhases(pillar.ownerAddress.toString(), phaseIds);
@@ -137,11 +141,28 @@ class NomIndexer {
     }
 
     await Future.wait<dynamic>(_dbBatch);
-    await DatabaseService().insertMomentum(momentum);
-
+    await _insertMomentum(momentum);
     print(
         'processMomentum() executed in ${stopwatch.elapsed.inMilliseconds} msecs');
     stopwatch.stop();
+  }
+
+  _insertMomentum(Momentum m) async {
+    dynamic pillarInfo = await DatabaseService()
+        .getPillarInfoAtHeightByProducer(m.producer.toString(), m.height);
+
+    if (pillarInfo.isEmpty) {
+      pillarInfo = await DatabaseService()
+          .getPillarInfoByProducer(m.producer.toString());
+    }
+
+    if (pillarInfo['ownerAddress'] != null &&
+        pillarInfo['ownerAddress'] != '') {
+      await DatabaseService()
+          .incrementPillarMomentumCount(pillarInfo['ownerAddress']);
+    }
+    await DatabaseService().insertMomentum(
+        m, pillarInfo['ownerAddress'] ?? '', pillarInfo['name'] ?? '');
   }
 
   _updateBalances(List<AccountHeader> headers) async {
@@ -166,6 +187,7 @@ class NomIndexer {
   _updateAccountBlocks(List<AccountHeader> headers) async {
     final List<AccountBlock?> accountBlocks = [];
     await Future.forEach(headers, (AccountHeader item) async {
+      //print('Fetching account block ' + item.hash.toString());
       accountBlocks.add(await _node.ledger.getAccountBlockByHash(item.hash));
     });
 

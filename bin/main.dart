@@ -34,8 +34,11 @@ _runIndexer(NomIndexer indexer) {
 _runCron(NomIndexer indexer) {
   Timer.periodic(Duration(minutes: 10), (Timer t) async {
     t.cancel();
+    final stopwatch = Stopwatch()..start();
     await indexer.updatePillarVotingActivity();
     await indexer.updateTokenHolderCounts();
+    print('runCron() executed in ${stopwatch.elapsed.inMilliseconds} msecs');
+    stopwatch.stop();
     _runCron(indexer);
   });
 }

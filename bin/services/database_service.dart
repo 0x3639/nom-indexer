@@ -37,7 +37,7 @@ class DatabaseService {
       'postgres://${Config.databaseUsername}:${Config.databasePassword}@${Config.databaseAddress}:${Config.databasePort}/${Config.databaseName}';
 
   final String _momentumColumns =
-      'height BIGINT PRIMARY KEY, hash TEXT, timestamp BIGINT, txCount INT, producer TEXT';
+      'height BIGINT PRIMARY KEY, hash TEXT, timestamp BIGINT, txCount INT, producer TEXT, producerOwner TEXT, producerName TEXT';
 
   final String _accountColumns =
       '''address TEXT PRIMARY KEY, blockCount BIGINT, publicKey TEXT, delegate TEXT DEFAULT '' NOT NULL, delegationStartTimestamp BIGINT DEFAULT 0 NOT NULL''';
@@ -57,7 +57,8 @@ class DatabaseService {
       '''ownerAddress TEXT PRIMARY KEY, producerAddress TEXT, withdrawAddress TEXT, name TEXT, rank INT,
       giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
       revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
-      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, isRevoked BOOL DEFAULT false NOT NULL''';
+      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, producedMomentumCount BIGINT DEFAULT 0 NOT NULL,
+      isRevoked BOOL DEFAULT false NOT NULL''';
 
   final String _pillarUpdateColumns =
       '''id SERIAL PRIMARY KEY, name TEXT, ownerAddress TEXT, producerAddress TEXT, withdrawAddress TEXT, momentumTimestamp BIGINT, momentumHeight BIGINT, momentumHash TEXT,
@@ -218,6 +219,14 @@ class DatabaseService {
     return r.isNotEmpty ? r[0][0] : -1;
   }
 
+  Future<dynamic> getPillarSpawnTimestampByOwner(String ownerAddress) async {
+    List r = await _conn.query('''SELECT spawnTimestamp
+            FROM ${Table.pillars}
+            WHERE ownerAddress = @ownerAddress
+           ''', {'ownerAddress': ownerAddress}).toList();
+    return r.isNotEmpty ? r[0][0] : -1;
+  }
+
   Future<dynamic> getPillarRevokeTimestamp(String pillar) async {
     List r = await _conn.query('''SELECT revokeTimestamp
             FROM ${Table.pillars}
@@ -237,11 +246,38 @@ class DatabaseService {
     return r.isNotEmpty ? r[0][0] : '';
   }
 
-  insertMomentum(Momentum momentum) async {
+  Future<dynamic> getPillarInfoAtHeightByProducer(
+      String producerAddress, int height) async {
+    List r = await _conn.query('''SELECT ownerAddress, name
+            FROM ${Table.pillarUpdates}
+            WHERE producerAddress = @producerAddress and momentumHeight <= @height
+           ''',
+        {'producerAddress': producerAddress, 'height': height}).toList();
+    if (r.isNotEmpty) {
+      return {'ownerAddress': r[0][0], 'name': r[0][1]};
+    }
+    return {};
+  }
+
+  Future<dynamic> getPillarInfoByProducer(String producerAddress) async {
+    List r = await _conn.query('''SELECT ownerAddress, name
+            FROM ${Table.pillars}
+            WHERE producerAddress = @producerAddress
+           ''', {'producerAddress': producerAddress}).toList();
+    if (r.isNotEmpty) {
+      return {'ownerAddress': r[0][0], 'name': r[0][1]};
+    }
+    return {};
+  }
+
+  insertMomentum(
+      Momentum momentum, String producerOwner, String producerName) async {
     final json = momentum.toJson();
     json['txCount'] = momentum.content.length;
+    json['producerOwner'] = producerOwner;
+    json['producerName'] = producerName;
     await _conn.execute(
-        'INSERT INTO ${Table.momentums} VALUES (@height, @hash, @timestamp, @txCount, @producer) ON CONFLICT (height) DO NOTHING',
+        'INSERT INTO ${Table.momentums} VALUES (@height, @hash, @timestamp, @txCount, @producer, @producerOwner, @producerName) ON CONFLICT (height) DO NOTHING',
         json);
   }
 
@@ -387,13 +423,8 @@ class DatabaseService {
 
   setPillarAsRevoked(
       String ownerAddress, String name, int revokeTimestamp) async {
-    '''ownerAddress TEXT PRIMARY KEY, producerAddress TEXT, withdrawAddress TEXT, name TEXT, rank INT,
-      giveMomentumRewardPercentage SMALLINT, giveDelegateRewardPercentage SMALLINT, isRevocable BOOL,
-      revokeCooldown INT, revokeTimestamp BIGINT, weight BIGINT, epochProducedMomentums SMALLINT, epochExpectedMomentums SMALLINT,
-      slotCostQsr BIGINT DEFAULT 0 NOT NULL, spawnTimestamp BIGINT DEFAULT 0 NOT NULL, votingActivity REAL DEFAULT 0 NOT NULL, isRevoked BOOL DEFAULT false NOT NULL''';
-
     await _conn.execute('''
-        INSERT INTO ${Table.pillars} VALUES (@ownerAddress, '', '', @name, 0, 0, 0, false, 0, @revokeTimestamp, 0, 0, 0, 0, 0, 0, @isRevoked)
+        INSERT INTO ${Table.pillars} VALUES (@ownerAddress, '', '', @name, 0, 0, 0, false, 0, @revokeTimestamp, 0, 0, 0, 0, 0, 0, 0, @isRevoked)
         ON CONFLICT (ownerAddress) DO UPDATE SET producerAddress = '', withdrawAddress = '', name = @name,
         rank = 0, giveMomentumRewardPercentage = 0, giveDelegateRewardPercentage = 0,
         isRevocable = false, revokeCooldown = 0, revokeTimestamp = @revokeTimestamp, weight = 0,
@@ -404,6 +435,14 @@ class DatabaseService {
       'name': name,
       'revokeTimestamp': revokeTimestamp
     });
+  }
+
+  incrementPillarMomentumCount(String ownerAddress) async {
+    await _conn.execute('''
+        UPDATE ${Table.pillars}
+        SET producedMomentumCount = pillars.producedMomentumCount + 1
+        WHERE ownerAddress = @ownerAddress
+        ''', {'ownerAddress': ownerAddress});
   }
 
   insertPillarUpdate(
