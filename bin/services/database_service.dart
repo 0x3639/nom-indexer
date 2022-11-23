@@ -164,8 +164,8 @@ class DatabaseService {
   Future<int> getVoteCountForProjects(
       String voterAddress, List<String> ids) async {
     final r = await _conn.query(
-        'SELECT DISTINCT projectId FROM votes where voterAddress = @voterAddress and projectId LIKE ANY (@ids)',
-        {'voterAddress': voterAddress, 'ids': ids}).toList();
+        '''SELECT DISTINCT projectId FROM votes where voterAddress = @voterAddress and projectId LIKE ANY (@ids) and phaseId = ''
+        ''', {'voterAddress': voterAddress, 'ids': ids}).toList();
     return r.isNotEmpty ? r.length : 0;
   }
 
