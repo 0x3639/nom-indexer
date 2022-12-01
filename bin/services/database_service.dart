@@ -285,7 +285,7 @@ class DatabaseService {
     final json = block.toJson();
     json['blockCount'] = block.height;
     await _conn.execute(
-        'INSERT INTO ${Table.accounts} VALUES (@address, @blockCount, @publicKey) ON CONFLICT (address) DO UPDATE SET blockCount = @blockCount',
+        'INSERT INTO ${Table.accounts} VALUES (@address, @blockCount, @publicKey) ON CONFLICT (address) DO UPDATE SET blockCount = @blockCount, publicKey = @publicKey',
         json);
   }
 
