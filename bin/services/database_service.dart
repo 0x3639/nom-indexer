@@ -473,8 +473,16 @@ class DatabaseService {
     json['owner'] = sentinel.owner.toString();
     await _conn.execute('''
         INSERT INTO ${Table.sentinels} VALUES (@owner, @registrationTimestamp, @isRevocable, @revokeCooldown, @active)
-        ON CONFLICT (owner) DO UPDATE SET isRevocable = @isRevocable, revokeCooldown = @revokeCooldown, active = @active
+        ON CONFLICT (owner) DO UPDATE SET isRevocable = @isRevocable, revokeCooldown = @revokeCooldown
         ''', json);
+  }
+
+  setSentinelInactive(String ownerAddress) async {
+    await _conn.execute('''
+        UPDATE ${Table.sentinels}
+        SET active = @isActive
+        WHERE owner = @owner
+        ''', {'isActive': false, 'owner': ownerAddress});
   }
 
   insertStake(

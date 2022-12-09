@@ -368,6 +368,8 @@ class NomIndexer {
       await _indexEmbeddedStakeContract(block, data);
     } else if (contract == tokenAddress.toString()) {
       await _indexEmbeddedTokenContract(block, data);
+    } else if (contract == sentinelAddress.toString()) {
+      await _indexEmbeddedSentinelContract(block, data);
     }
   }
 
@@ -548,6 +550,16 @@ class NomIndexer {
         _dbBatch.add(DatabaseService().updateTokenLastUpdateTimestamp(
             data.inputs['tokenStandard']!,
             block.confirmationDetail!.momentumTimestamp));
+      }
+    }
+  }
+
+  _indexEmbeddedSentinelContract(AccountBlock block, TxData data) async {
+    if (data.method == 'Revoke') {
+      if (block.confirmationDetail != null &&
+          block.pairedAccountBlock != null) {
+        _dbBatch.add(DatabaseService()
+            .setSentinelInactive(block.pairedAccountBlock!.address.toString()));
       }
     }
   }
