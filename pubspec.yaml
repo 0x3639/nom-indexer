@@ -1,12 +1,12 @@
 name: nom_indexer
 
 environment:
-  sdk: ">=2.14.0 <3.0.0"
+  sdk: ">=3.0.0"
 
 dependencies:
   znn_sdk_dart:
     git:
       url: https://github.com/zenon-network/znn_sdk_dart.git
-      ref: master
+      ref: 32e4b0cbd7dc57e4e98e3dbdb9728a8b787494b8
   postgresql2: ^1.0.2
   settings_yaml: ^3.4.0

@@ -1,5 +1,4 @@
 import 'package:znn_sdk_dart/znn_sdk_dart.dart';
-import 'package:znn_sdk_dart/src/abi/abi.dart';
 import '../services/database_service.dart';
 import 'package:collection/collection.dart';
 
@@ -176,7 +175,7 @@ class NomIndexer {
       if (ai.balanceInfoList != null) {
         await Future.forEach(ai.balanceInfoList!,
             (BalanceInfoListItem bi) async {
-          if (bi.balance != null && bi.balance! >= 0) {
+          if (bi.balance != null && bi.balance! >= BigInt.zero) {
             _dbBatch.add(DatabaseService().insertBalance(ai.address, bi));
           }
         });
@@ -341,7 +340,7 @@ class NomIndexer {
     _dbBatch.add(DatabaseService().updateCumulativeRewards(
         block.address.toString(),
         rewardType.index,
-        rewardAmount,
+        rewardAmount.toInt(),
         tokenStandard));
     _dbBatch.add(DatabaseService().insertRewardTransaction(
         block.hash.toString(),
@@ -350,7 +349,7 @@ class NomIndexer {
         block.confirmationDetail?.momentumTimestamp ?? 0,
         block.confirmationDetail?.momentumHeight ?? 0,
         block.height,
-        rewardAmount,
+        rewardAmount.toInt(),
         tokenStandard,
         sourceAddress));
   }
@@ -394,7 +393,7 @@ class NomIndexer {
             _dbBatch.add(DatabaseService().updatePillarSpawnInfo(
                 _getPillarOwnerAddress(data.inputs['name'] ?? ''),
                 block.confirmationDetail!.momentumTimestamp,
-                descendant.amount));
+                descendant.amount.toInt()));
             _dbBatch.add(DatabaseService().insertPillarUpdate(
                 block.pairedAccountBlock?.address.toString() ?? '',
                 block.confirmationDetail!.momentumTimestamp,
@@ -517,7 +516,7 @@ class NomIndexer {
                   block.pairedAccountBlock!.address.toString(),
                   stake.startTimestamp,
                   stake.expirationTimestamp,
-                  stake.amount,
+                  stake.amount.toInt(),
                   int.parse(data.inputs['durationInSec']!),
                   _getStakeCancelId(stake.id)));
             }
@@ -542,7 +541,7 @@ class NomIndexer {
           block.pairedAccountBlock != null) {
         _dbBatch.add(DatabaseService().updateTokenBurnAmount(
             block.pairedAccountBlock!.tokenStandard.toString(),
-            block.pairedAccountBlock!.amount));
+            block.pairedAccountBlock!.amount.toInt()));
       }
     } else if (data.method == 'UpdateToken' && data.inputs.isNotEmpty) {
       if (block.confirmationDetail != null &&
