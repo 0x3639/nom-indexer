@@ -308,7 +308,7 @@ class DatabaseService {
         {
           'address': address,
           'tokenStandard': balance.token!.tokenStandard.toString(),
-          'balance': balance.balance
+          'balance': balance.balance?.toInt() ?? 0
         });
   }
 
