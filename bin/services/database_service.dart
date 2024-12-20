@@ -323,6 +323,7 @@ class DatabaseService {
     json['momentumTimestamp'] =
         block.confirmationDetail?.momentumTimestamp ?? 0;
     json['momentumHeight'] = block.confirmationDetail?.momentumHeight ?? 0;
+    json['amount'] = block.amount.toInt();
 
     await _conn.execute('''
         INSERT INTO ${Table.accountBlocks}
@@ -353,9 +354,12 @@ class DatabaseService {
   }
 
   insertToken(Token token) async {
+    final json = token.toJson();
+    json['maxSupply'] = token.maxSupply.toInt();
+    json['totalSupply'] = token.totalSupply.toInt();
     await _conn.execute(
         'INSERT INTO ${Table.tokens} VALUES (@tokenStandard, @name, @symbol, @domain, @decimals, @owner, @totalSupply, @maxSupply, @isBurnable, @isMintable, @isUtility) ON CONFLICT (tokenStandard) DO UPDATE SET domain = @domain, totalSupply = @totalSupply, maxSupply = @maxSupply',
-        token.toJson());
+        json);
   }
 
   updateTokenLastUpdateTimestamp(String tokenStandard, int timestamp) async {
@@ -396,6 +400,7 @@ class DatabaseService {
     json['giveDelegateRewardPercentage'] = pillar.giveDelegateRewardPercentage;
     json['epochProducedMomentums'] = pillar.currentStats.producedMomentums;
     json['epochExpectedMomentums'] = pillar.currentStats.expectedMomentums;
+    json['weight'] = pillar.weight.toInt();
 
     await _conn.execute('''
         INSERT INTO ${Table.pillars} VALUES (@ownerAddress, @producerAddress, @withdrawAddress, @name, @rank,
@@ -521,6 +526,8 @@ class DatabaseService {
     json['yesVotes'] = project.voteBreakdown.yes;
     json['noVotes'] = project.voteBreakdown.no;
     json['totalVotes'] = project.voteBreakdown.total;
+    json['znnFundsNeeded'] = project.znnFundsNeeded.toInt();
+    json['qsrFundsNeeded'] = project.qsrFundsNeeded.toInt();
 
     await _conn.execute('''
         INSERT INTO ${Table.projects} VALUES (@id, @votingId, @owner, @name,
@@ -536,6 +543,8 @@ class DatabaseService {
     json['yesVotes'] = phase.voteBreakdown.yes;
     json['noVotes'] = phase.voteBreakdown.no;
     json['totalVotes'] = phase.voteBreakdown.total;
+    json['znnFundsNeeded'] = phase.znnFundsNeeded.toInt();
+    json['qsrFundsNeeded'] = phase.qsrFundsNeeded.toInt();
 
     await _conn.execute('''
         INSERT INTO ${Table.projectPhases} VALUES (@id, @projectId, @votingId, @name,
@@ -586,6 +595,7 @@ class DatabaseService {
     json['momentumHash'] = momentumHash;
     json['momentumTimestamp'] = momentumTimestamp;
     json['momentumHeight'] = momentumHeight;
+    json['qsrAmount'] = fusion.qsrAmount.toInt();
     await _conn.execute(
         'INSERT INTO ${Table.fusions} VALUES (@id, @address, @beneficiary, @momentumHash, @momentumTimestamp, @momentumHeight, @qsrAmount, @expirationHeight, @isActive, @cancelId) ON CONFLICT (id) DO NOTHING',
         json);
