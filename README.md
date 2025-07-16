@@ -38,6 +38,45 @@ To stop and remove all data:
 docker-compose down -v
 ```
 
+### Running with a Local Zenon Node
+
+The indexer can optionally run with a local go-zenon node included in the Docker Compose setup:
+
+1. Start the go-zenon node (it will begin syncing from genesis):
+   ```bash
+   docker-compose up -d go-zenon
+   ```
+
+2. Monitor the node's sync progress:
+   ```bash
+   docker-compose logs -f go-zenon
+   ```
+
+3. Check if the node is fully synced:
+   ```bash
+   curl -X POST -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"stats.syncInfo","params":[]}' \
+     http://localhost:35998
+   ```
+   
+   The node is fully synced when the response shows `"state": 2` and `currentHeight` equals `targetHeight`.
+
+4. Once synced, update your `.env` file to use the local node:
+   ```bash
+   # Change from external node:
+   # NODE_URL_WS=ws://your-external-node:35998
+   
+   # To local node:
+   NODE_URL_WS=ws://go-zenon:35998
+   ```
+
+5. Restart the indexer to use the local node:
+   ```bash
+   docker-compose restart nom-indexer
+   ```
+
+The go-zenon node data persists in a Docker volume, so you won't need to re-sync if you restart the container.
+
 ## Building from source
 The Dart SDK is required to build the server from source (https://dart.dev/get-dart).
 Use the Dart SDK to install the dependencies and compile the program by running the following commands:

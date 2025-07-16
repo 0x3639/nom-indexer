@@ -41,9 +41,25 @@ services:
       - nom-network
     restart: unless-stopped
 
+  go-zenon:
+    build:
+      context: ./docker/go-zenon
+      dockerfile: Dockerfile
+    container_name: go-zenon
+    volumes:
+      - zenon_data:/zenon-data
+    ports:
+      - "35997:35997"  # P2P port
+      - "35998:35998"  # WebSocket RPC port
+    networks:
+      - nom-network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     name: nom-indexer-postgres-data
+  zenon_data:
+    name: go-zenon-data
 
 networks:
   nom-network:
