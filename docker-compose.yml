@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: nom-indexer-postgres
+    environment:
+      POSTGRES_DB: nom_indexer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nomIndexerPass123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nom_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nom-network
+    restart: unless-stopped
+
+  nom-indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nom-indexer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_URL_WS: ${NODE_URL_WS:-ws://127.0.0.1:35998}
+      DATABASE_ADDRESS: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: nom_indexer
+      DATABASE_USERNAME: postgres
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-nomIndexerPass123}
+    networks:
+      - nom-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: nom-indexer-postgres-data
+
+networks:
+  nom-network:
+    name: nom-indexer-network
+    driver: bridge
