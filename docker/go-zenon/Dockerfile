@@ -39,4 +39,4 @@ EXPOSE 35997 35998
 
 # Run znnd
 ENTRYPOINT ["znnd"]
-CMD ["--data", "/zenon-data", "--log-level", "info"]
+CMD ["--data", "/zenon-data"]
