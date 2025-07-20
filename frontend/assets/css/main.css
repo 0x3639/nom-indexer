@@ -1,0 +1,265 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Force override of default styles */
+html, body {
+  background-color: #151515 !important;
+  color: #ffffff !important;
+}
+
+:root {
+  /* Official Zenon Brand Colors */
+  --zenon-intergalactic-black: #151515;
+  --zenon-green: #6FF34D;
+  --zenon-quasar-blue: #0061EB;
+  --zenon-plasma-pink: #F91690;
+  --zenon-syrius-green: #00D557;
+  
+  /* Theme Colors */
+  --zenon-bg-primary: #151515;
+  --zenon-bg-secondary: #1a1a1a;
+  --zenon-bg-tertiary: #202020;
+  --zenon-text-primary: #ffffff;
+  --zenon-text-secondary: #cccccc;
+  --zenon-text-muted: #888888;
+  --zenon-accent: #6FF34D;
+  --zenon-accent-hover: #5bd93a;
+  --zenon-border: #333333;
+  --zenon-error: #F91690;
+  --zenon-warning: #0061EB;
+}
+
+* {
+  font-family: 'Montserrat', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+body {
+  background-color: #151515;
+  color: #ffffff;
+  margin: 0;
+  padding: 0;
+}
+
+@layer components {
+  .chat-container {
+    @apply flex flex-col h-screen;
+    background-color: var(--zenon-bg-primary);
+  }
+  
+  .chat-header {
+    @apply px-6 py-4 border-b;
+    background-color: var(--zenon-bg-secondary);
+    border-color: var(--zenon-border);
+  }
+  
+  .chat-messages {
+    @apply flex-1 overflow-y-auto px-4 py-6;
+    background-color: var(--zenon-bg-primary);
+  }
+  
+  .message {
+    @apply mb-6 max-w-none;
+  }
+  
+  .message-user {
+    @apply flex justify-end;
+  }
+  
+  .message-user .message-content {
+    @apply px-4 py-3 rounded-2xl max-w-2xl;
+    background-color: var(--zenon-accent);
+    color: var(--zenon-bg-primary);
+    font-weight: 500;
+  }
+  
+  .message-assistant {
+    @apply flex justify-start;
+  }
+  
+  .message-assistant .message-content {
+    @apply px-0 py-0 max-w-4xl;
+    background-color: transparent;
+    color: var(--zenon-text-primary);
+  }
+  
+  .assistant-avatar {
+    @apply w-8 h-8 rounded-full mr-3 mt-1 flex items-center justify-center text-sm font-bold;
+    background-color: var(--zenon-accent);
+    color: var(--zenon-bg-primary);
+  }
+  
+  .user-avatar {
+    @apply w-8 h-8 rounded-full ml-3 mt-1 flex items-center justify-center text-sm font-bold;
+    background-color: var(--zenon-bg-tertiary);
+    color: var(--zenon-text-primary);
+  }
+  
+  .sql-section {
+    @apply mt-4 p-4 rounded-lg;
+    background-color: var(--zenon-bg-secondary);
+    border: 1px solid var(--zenon-border);
+  }
+  
+  .sql-header {
+    @apply flex justify-between items-center mb-3;
+  }
+  
+  .sql-title {
+    @apply text-sm font-medium;
+    color: var(--zenon-text-secondary);
+  }
+  
+  .copy-button {
+    @apply px-3 py-1 text-xs rounded transition-colors;
+    background-color: var(--zenon-bg-tertiary);
+    color: var(--zenon-text-secondary);
+    border: 1px solid var(--zenon-border);
+  }
+  
+  .copy-button:hover {
+    background-color: var(--zenon-accent);
+    color: var(--zenon-bg-primary);
+    border-color: var(--zenon-accent);
+  }
+  
+  .sql-code {
+    @apply p-3 rounded-md font-mono text-sm overflow-x-auto;
+    background-color: var(--zenon-bg-primary);
+    color: var(--zenon-text-primary);
+    border: 1px solid var(--zenon-border);
+  }
+  
+  .results-section {
+    @apply mt-4;
+  }
+  
+  .results-header {
+    @apply mb-3;
+    color: var(--zenon-text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  
+  .result-table {
+    @apply w-full border-collapse rounded-lg overflow-hidden;
+    background-color: var(--zenon-bg-secondary);
+    border: 1px solid var(--zenon-border);
+  }
+  
+  .result-table th {
+    @apply px-4 py-3 text-left text-sm font-medium border-b;
+    background-color: var(--zenon-bg-tertiary);
+    color: var(--zenon-text-primary);
+    border-color: var(--zenon-border);
+  }
+  
+  .result-table td {
+    @apply px-4 py-3 text-sm border-b;
+    color: var(--zenon-text-primary);
+    border-color: var(--zenon-border);
+  }
+  
+  .result-table tr:last-child td {
+    @apply border-b-0;
+  }
+  
+  .result-table tr:hover {
+    background-color: var(--zenon-bg-primary);
+  }
+  
+  .error-message {
+    @apply mt-3 p-3 rounded-lg text-sm;
+    background-color: rgba(255, 107, 107, 0.1);
+    color: var(--zenon-error);
+    border: 1px solid rgba(255, 107, 107, 0.2);
+  }
+  
+  .chat-input-area {
+    @apply px-6 py-4 border-t;
+    background-color: var(--zenon-bg-secondary);
+    border-color: var(--zenon-border);
+  }
+  
+  .chat-input-form {
+    @apply flex space-x-4 max-w-4xl mx-auto;
+  }
+  
+  .chat-input {
+    @apply flex-1 px-4 py-3 rounded-lg border focus:outline-none focus:ring-2 transition-all;
+    background-color: var(--zenon-bg-primary);
+    color: var(--zenon-text-primary);
+    border-color: var(--zenon-border);
+    font-size: 0.95rem;
+  }
+  
+  .chat-input:focus {
+    border-color: var(--zenon-accent);
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.2);
+  }
+  
+  .chat-input::placeholder {
+    color: var(--zenon-text-muted);
+  }
+  
+  .send-button {
+    @apply px-6 py-3 rounded-lg font-medium transition-all;
+    background-color: var(--zenon-accent);
+    color: var(--zenon-bg-primary);
+  }
+  
+  .send-button:hover:not(:disabled) {
+    background-color: var(--zenon-accent-hover);
+    transform: translateY(-1px);
+  }
+  
+  .send-button:disabled {
+    background-color: var(--zenon-bg-tertiary);
+    color: var(--zenon-text-muted);
+    cursor: not-allowed;
+  }
+  
+  .loading-spinner {
+    @apply inline-flex items-center space-x-2;
+    color: var(--zenon-text-secondary);
+  }
+  
+  .spinner-icon {
+    @apply animate-spin h-5 w-5;
+  }
+  
+  .welcome-screen {
+    @apply flex flex-col items-center justify-center text-center py-12;
+  }
+  
+  .welcome-title {
+    @apply text-2xl font-bold mb-2;
+    color: var(--zenon-text-primary);
+  }
+  
+  .welcome-subtitle {
+    @apply text-base mb-8;
+    color: var(--zenon-text-secondary);
+  }
+  
+  .example-queries {
+    @apply grid gap-3 max-w-2xl w-full;
+  }
+  
+  .example-query {
+    @apply text-left p-4 rounded-lg transition-all cursor-pointer;
+    background-color: var(--zenon-bg-secondary);
+    color: var(--zenon-text-primary);
+    border: 1px solid var(--zenon-border);
+  }
+  
+  .example-query:hover {
+    background-color: var(--zenon-bg-tertiary);
+    border-color: var(--zenon-accent);
+    transform: translateY(-1px);
+  }
+}
